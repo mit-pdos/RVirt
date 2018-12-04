@@ -16,12 +16,18 @@ mod uart;
 #[naked]
 #[no_mangle]
 #[link_section = ".text.init"]
-fn _start(/*hartid: usize, device_tree_blob: usize*/) {
+fn _start() {
+    let _hartid: usize;
+    let device_tree_blob: usize;
     unsafe {
         asm!("li sp, 0x800f1000");
+        asm!("mv $0, a0" : "=r"(_hartid));
+        asm!("mv $0, a1" : "=r"(device_tree_blob));
     }
+
     uart::enable();
     println!("Hello world!");
+    println!("dtb = {:X}", device_tree_blob);
 }
 
 
