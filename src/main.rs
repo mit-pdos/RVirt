@@ -9,6 +9,8 @@
 #[start] fn start(_argc: isize, _argv: *const *const u8) -> isize {0}
 #[no_mangle] pub fn abort() -> ! {loop {}}
 
+#[macro_use]
+mod print;
 mod uart;
 
 #[naked]
@@ -19,9 +21,7 @@ fn _start(/*hartid: usize, device_tree_blob: usize*/) {
         asm!("li sp, 0x800f1000");
     }
     uart::enable();
-    for b in "Hello world!\n".bytes() {
-        uart::putchar(b);
-    }
+    println!("Hello world!");
 }
 
 
