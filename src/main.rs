@@ -28,6 +28,21 @@ fn _start() {
     uart::enable();
     println!("Hello world!");
     println!("dtb = {:X}", device_tree_blob);
+
+    // 0x3A0 = pmpcfg0
+    // 0x3B0 = pmppaddr0
+    unsafe {
+        asm!("li t0, 0x0fffffff\n
+              li t1, 0x98\n
+              csrw 0x3B0, t0\n
+              csrw 0x3A0, t1\n" ::: "t0", "t1");
+    }
+    let pmpcfg0: usize;
+    let pmpaddr0: usize;
+    unsafe { asm!("csrr $0, 0x3A0" : "=r"(pmpcfg0)); }
+    unsafe { asm!("csrr $0, 0x3B0" : "=r"(pmpaddr0)); }
+
+    println!("pmpaddr0 = {:X}, pmpcfg0 = {:X}", pmpaddr0, pmpcfg0)
 }
 
 
