@@ -11,38 +11,47 @@
 
 #[macro_use]
 mod print;
-mod uart;
+mod spin;
 
 #[naked]
 #[no_mangle]
 #[link_section = ".text.init"]
 fn _start() {
-    let _hartid: usize;
-    let device_tree_blob: usize;
+    let hartid: usize;
+    let _device_tree_blob: usize;
     unsafe {
-        asm!("li sp, 0x800f1000");
-        asm!("mv $0, a0" : "=r"(_hartid));
-        asm!("mv $0, a1" : "=r"(device_tree_blob));
+        asm!("slli t0, a0, 12
+              li t1, 0x800f1000
+              add sp, t0, t1" ::: "t0", "t1" : "volatile");
+        asm!("mv $0, a0" :"=r"(hartid) ::: "volatile");
+        asm!("mv $0, a1" : "=r"(_device_tree_blob) ::: "volatile");
     }
 
-    uart::enable();
-    println!("Hello world!");
-    println!("dtb = {:X}", device_tree_blob);
+    for i in 0..10 {
+        // let mut enabled = PRINT_LOCK.lock();
+        // if !*enabled {
+        //     uart::enable();
+        //     *enabled = true;
+        //     println!("Starting on {}!", hartid);
+        // }
 
-    // 0x3A0 = pmpcfg0
-    // 0x3B0 = pmppaddr0
-    unsafe {
-        asm!("li t0, 0x0fffffff\n
-              li t1, 0x98\n
-              csrw 0x3B0, t0\n
-              csrw 0x3A0, t1\n" ::: "t0", "t1");
+        println!("{}: Hello from {}", i, hartid);
     }
-    let pmpcfg0: usize;
-    let pmpaddr0: usize;
-    unsafe { asm!("csrr $0, 0x3A0" : "=r"(pmpcfg0)); }
-    unsafe { asm!("csrr $0, 0x3B0" : "=r"(pmpaddr0)); }
+    // // 0x3A0 = pmpcfg0
+    // // 0x3B0 = pmppaddr0
+    // unsafe {
+    //     asm!("li t0, 0x0fffffff\n
+    //           li t1, 0x98\n
+    //           csrw 0x3B0, t0\n
+    //           csrw 0x3A0, t1\n" ::: "t0", "t1");
+    // }
+    // let pmpcfg0: usize;
+    // let pmpaddr0: usize;
+    // unsafe { asm!("csrr $0, 0x3A0" : "=r"(pmpcfg0)); }
+    // unsafe { asm!("csrr $0, 0x3B0" : "=r"(pmpaddr0)); }
 
-    println!("pmpaddr0 = {:X}, pmpcfg0 = {:X}", pmpaddr0, pmpcfg0)
+    // println!("pmpaddr0 = {:X}, pmpcfg0 = {:X}", pmpaddr0, pmpcfg0)
+    loop {}
 }
 
 
