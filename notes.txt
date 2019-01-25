@@ -1,0 +1,16 @@
+
+RISC-V Spec
+-----------
+https://content.riscv.org/wp-content/uploads/2017/05/riscv-spec-v2.2.pdf
+
+RISC-V Privileged Spec
+----------------------
+https://content.riscv.org/wp-content/uploads/2017/05/riscv-privileged-v1.10.pdf
+
+Device Configuration
+--------------------
+https://github.com/riscv/riscv-qemu/blob/riscv-all/hw/riscv/virt.c
+
+Description of PLIC / CLINT
+---------------------------
+https://static.dev.sifive.com/U54-MC-RVCoreIP.pdf

@@ -2,7 +2,7 @@ use core::fmt;
 use crate::spin::Mutex;
 
 // see https://github.com/riscv/riscv-pk/blob/master/machine/uart16550.c
-mod uart {
+pub mod uart {
     use core::ptr;
 
     const UART: *mut u8 = 0x10000000 as *mut u8;

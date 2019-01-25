@@ -1,0 +1,16 @@
+{
+  "llvm-target": "riscv32imac-unknown-none-elf",
+  "executables": true,
+  "linker-flavor": "ld",
+  "linker": "ld.bfd",
+  "pre-link-args": {
+      "ld": [
+	  "--script=kernel.ld"
+	]
+    },
+  "panic-strategy": "abort",
+  "disable-redzone": true,
+  "relocation_model": "static"
+}
+
+
