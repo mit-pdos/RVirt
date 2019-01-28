@@ -5,7 +5,7 @@ release: src/*.rs Cargo.toml
 	xargo rustc --release --target riscv32imac-unknown-none-elf -- -C link-arg=-Tsrc/linker.ld  -C linker=riscv32-unknown-elf-ld -Z linker-flavor=ld
 
 svpn: *.c Makefile
-	riscv64-unknown-elf-gcc -O0 -nostdlib *.c -o svpn
+	riscv32-unknown-elf-gcc -O0 -nostdlib *.c -o svpn
 
 qemu: debug
 	qemu-system-riscv32 -machine virt -kernel target/riscv32imac-unknown-none-elf/debug/svpn -nographic

@@ -16,7 +16,6 @@ mod csr;
 mod riscv;
 #[macro_use]
 mod print;
-mod spin;
 mod trap;
 
 const HART_MEM_SIZE: usize = 32 * 1024 * 1024;
@@ -101,8 +100,13 @@ fn _start2(hartid: usize, _device_tree_blob: usize) {
         println!("{}: Hello from {}, cycle={:x}", i, hartid, csrr!(cycle));
     }
 
+    csrs!(mideleg, 0xbbb);
+    csrs!(medeleg, 0xffff);
+    csrs!(sstatus, 0x8);
     csrs!(mstatus, 0x8);
-    csrw!(mtvec, ((trap::trap_entry as *const () as usize) + 3) & !3);
+    csrw!(stvec, ((trap::strap_entry as *const () as usize) + 3) & !3);
+    csrw!(mtvec, ((trap::mtrap_entry as *const () as usize) + 3) & !3);
+    csrw!(sie, 0x888);
     csrw!(mie, 0x888);
     // csrw!(mip, 0x0);
 

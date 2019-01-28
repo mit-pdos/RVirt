@@ -7,4 +7,4 @@ edition = "2018"
 [dependencies]
 # r0 = "0.2.2"
 # riscv = "0.3.0"
-# spin = { version = "0.4.10", default-features = false }
+spin = "0.5.0"

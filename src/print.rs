@@ -1,5 +1,5 @@
 use core::fmt;
-use crate::spin::Mutex;
+use spin::Mutex;
 
 // see https://github.com/riscv/riscv-pk/blob/master/machine/uart16550.c
 pub mod uart {
