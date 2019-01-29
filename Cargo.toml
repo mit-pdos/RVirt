@@ -8,3 +8,4 @@ edition = "2018"
 # r0 = "0.2.2"
 # riscv = "0.3.0"
 spin = "0.5.0"
+riscv-decode = { git = "https://github.com/fintelia/riscv-decode.git" }

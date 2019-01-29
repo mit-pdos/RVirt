@@ -132,7 +132,7 @@ fn _start2(hartid: usize, _device_tree_blob: usize) {
     unsafe {
 
         csrw!(mepc, ((u_entry as *const () as usize) + 3) & !3);
-        csrs!(mstatus, 1 << 11);
+//        csrs!(mstatus, 1 << 11);
         asm!("mret" :::: "volatile");
     }
     println!("yyy");
@@ -142,8 +142,11 @@ fn _start2(hartid: usize, _device_tree_blob: usize) {
 
 fn u_entry() {
     println!("000");
+//    csrw!(stval, 0xdeafbeef);
+//    println!("{:#x}", csrr!(stval));
     unsafe {
-        asm!("mret" :::: "volatile");
+        asm!("ecall" :::: "volatile");
+        asm!("ecall" :::: "volatile");
         asm!("ecall" :::: "volatile");
     }
     println!("000");

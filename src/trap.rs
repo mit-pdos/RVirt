@@ -1,11 +1,54 @@
-
 use spin::Mutex;
+use riscv_decode::Instruction;
 
-const IE_USIE: usize = 0x1;
-const IE_SSIE: usize = 0x1;
+#[allow(unused)]
+mod constants {
+    pub const TVEC_MODE: usize = 0x3;
+    pub const TVEC_BASE: usize = !TVEC_MODE;
 
-const TVEC_MODE: usize = 0x3;
-const TVEC_BASE: usize = !TVEC_MODE;
+    pub const STATUS_UIE: usize = 1 << 0;
+    pub const STATUS_SIE: usize = 1 << 1;
+    pub const STATUS_UPIE: usize = 1 << 4;
+    pub const STATUS_SPIE: usize = 1 << 5;
+    pub const STATUS_SPP: usize = 1 << 8;
+    pub const STATUS_FS0: usize = 1 << 13;
+    pub const STATUS_FS1: usize = 1 << 14;
+    pub const STATUS_XS0: usize = 1 << 15;
+    pub const STATUS_XS1: usize = 1 << 16;
+    pub const STATUS_SUM: usize = 1 << 18;
+    pub const STATUS_MXR: usize = 1 << 19;
+    pub const STATUS_SD: usize = 1 << 31; // Only for RV32!
+
+    // pub const IP_SSIP: usize = 1 << 1;
+    // pub const IP_STIP: usize = 1 << 5;
+    // pub const IP_SEIP: usize = 1 << 9;
+
+    // pub const IE_SSIE: usize = 1 << 1;
+    // pub const IE_STIE: usize = 1 << 5;
+    // pub const IE_SEIE: usize = 1 << 9;
+
+    pub const MSTACK_BASE: usize = 0x80100000;
+    pub const SSTACK_BASE: usize = 0x80200000;
+}
+use self::constants::*;
+
+trait UsizeBits {
+    fn get(&self, mask: Self) -> bool;
+    fn set(&mut self, mask: Self, value: bool);
+}
+impl UsizeBits for usize {
+    fn get(&self, mask: Self) -> bool {
+        *self & mask != 0
+    }
+    fn set(&mut self, mask: Self, value: bool) {
+        if value {
+            *self |= mask;
+        } else {
+            *self &= !mask;
+        }
+    }
+}
+
 // 0x340 = mscratch
 // 0x140 = sscratch
 
@@ -93,7 +136,7 @@ pub unsafe fn mtrap() {
 pub unsafe fn strap_entry() -> ! {
     asm!(".align 4
           csrw 0x140, sp
-          li sp, 0x80100000
+          li sp, 0x80200000
           addi sp, sp, -16*4
           sw ra, 0*4(sp)
           sw t0, 1*4(sp)
@@ -136,6 +179,25 @@ pub unsafe fn strap_entry() -> ! {
     unreachable!()
 }
 
+// struct TrapFrame {
+//     ra: u32,
+//     t0: u32,
+//     t1: u32,
+//     t2: u32,
+//     t3: u32,
+//     t4: u32,
+//     t5: u32,
+//     t6: u32,
+//     a0: u32,
+//     a1: u32,
+//     a2: u32,
+//     a3: u32,
+//     a4: u32,
+//     a5: u32,
+//     a6: u32,
+//     a7: u32,
+// }
+
 #[derive(Default)]
 struct ShadowState {
     // sedeleg: usize, -- Hard-wired to zero
@@ -143,7 +205,7 @@ struct ShadowState {
 
     sstatus: usize,
     sie: usize,
-    sip: usize,
+    // sip: usize, -- checked dynamically on read
     stvec: usize,
     scounteren: usize,
     sscratch: usize,
@@ -159,7 +221,6 @@ impl ShadowState {
         Self {
             sstatus: 0,
             stvec: 0,
-            sip: 0,
             sie: 0,
             scounteren: 0,
             sscratch: 0,
@@ -171,6 +232,20 @@ impl ShadowState {
             smode: false,
         }
     }
+    pub fn push_sie(&mut self) {
+        self.sstatus.set(STATUS_SPIE, self.sstatus.get(STATUS_SIE));
+        self.sstatus.set(STATUS_SIE, false);
+    }
+    pub fn pop_sie(&mut self) {
+        self.sstatus.set(STATUS_SPIE, self.sstatus.get(STATUS_SIE));
+        self.sstatus.set(STATUS_SIE, false);
+        if self.sstatus & STATUS_SPIE != 0 {
+            self.sstatus |= STATUS_SIE;
+        } else {
+            self.sstatus &= !STATUS_SIE;
+        }
+        self.sstatus |= STATUS_SPIE;
+    }
 }
 
 static SHADOW_STATE: Mutex<ShadowState> = Mutex::new(ShadowState::new());
@@ -178,37 +253,85 @@ static SHADOW_STATE: Mutex<ShadowState> = Mutex::new(ShadowState::new());
 #[no_mangle]
 pub unsafe fn strap() {
     let cause = csrr!(scause);
+    let status = csrr!(sstatus);
     let mut state = SHADOW_STATE.lock();
 
+    if status.get(STATUS_SPP) {
+        println!("Trap from within hypervisor?!");
+        loop {}
+    }
+
     if (cause as isize) < 0 {
-        // TODO: mask interrupts
-        state.sepc = csrr!(sepc);
-        // TODO: update SIP
-        // TODO: update sstate
-
-        state.scause = cause;
-        state.smode = true;
-
-        match state.stvec & TVEC_MODE {
-            0 => csrw!(sepc, state.stvec & TVEC_BASE),
-            1 => csrw!(sepc, (state.stvec & TVEC_BASE) + 4 * cause & 0xff),
-            _ => unreachable!(),
+        let enabled = state.sstatus.get(STATUS_SIE);
+        let unmasked = state.sie & (1 << (cause & 0xff)) != 0;
+        if (!state.smode || enabled) && unmasked {
+            forward_interrupt(&mut state, cause, csrr!(sepc));
         }
     } else if cause == 12 || cause == 13 || cause == 15 {
         // TODO: Handle page fault
-    } else if cause == 2 {
-        println!("Illegal Instruction: {:#x}", csrr!(sepc));
-        loop {}
-        // TODO: Handle illegal instruction
-    } else if cause == 8 {
-        // TODO: Handle environment call
+    } else if cause == 2 && state.smode {
+        // Handle illegal instruction
+        let pc = csrr!(sepc);
+        let il = *(pc as *const u16);
+        let len = riscv_decode::instruction_length(il);
+        let instruction = match len {
+            2 => il as u32,
+            4 => il as u32 + (*((pc + 2) as *const u16) as u32) << 16,
+            _ => unreachable!(),
+        };
+
+        match riscv_decode::try_decode(instruction) {
+            Some(Instruction::Sret) => {
+                state.pop_sie();
+                state.smode = state.sstatus.get(STATUS_SPP);
+                state.sstatus.set(STATUS_SPP, false);
+                csrw!(sepc, state.sepc);
+            }
+            Some(Instruction::SfenceVma(rtype)) => {
+                // TODO
+            }
+            _ => forward_exception(&mut state, cause, pc),
+        }
+    } else if cause == 8 && state.smode {
+        asm!("
+          lw a0, 8*4($0)
+          lw a1, 9*4($0)
+          lw a2, 10*4($0)
+          lw a3, 11*4($0)
+          lw a4, 12*4($0)
+          lw a5, 13*4($0)
+          lw a6, 14*4($0)
+          lw a7, 15*4($0)
+          ecall
+          sw a7, 15*4($0)"
+             :: "r"(SSTACK_BASE) : "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7": "volatile");
         csrw!(sepc, csrr!(sepc) + 4);
     } else {
-        // Forward the trap on to guest OS
-        state.sepc = csrr!(sepc);
-        // TODO: update sstate
-        state.scause = cause;
-        state.smode = true;
-        csrw!(sepc, (state.stvec & TVEC_BASE) + 4 * cause & 0xff);
+        forward_exception(&mut state, cause, csrr!(sepc));
     }
+}
+
+fn forward_interrupt(state: &mut ShadowState, cause: usize, sepc: usize) {
+    state.push_sie();
+    state.sepc = sepc;
+    state.scause = cause;
+    state.sstatus.set(STATUS_SPP, state.smode);
+    state.stval = 0;
+    state.smode = true;
+
+    match state.stvec & TVEC_MODE {
+        0 => csrw!(sepc, state.stvec & TVEC_BASE),
+        1 => csrw!(sepc, (state.stvec & TVEC_BASE) + 4 * cause & 0xff),
+        _ => unreachable!(),
+    }
+}
+
+fn forward_exception(state: &mut ShadowState, cause: usize, sepc: usize) {
+    state.push_sie();
+    state.sepc = sepc;
+    state.scause = cause;
+    state.sstatus.set(STATUS_SPP, state.smode);
+    state.stval = csrr!(stval);
+    state.smode = true;
+    csrw!(sepc, state.stvec & TVEC_BASE);
 }
