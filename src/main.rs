@@ -100,8 +100,8 @@ fn _start2(hartid: usize, _device_tree_blob: usize) {
         println!("{}: Hello from {}, cycle={:x}", i, hartid, csrr!(cycle));
     }
 
-    csrs!(mideleg, 0xbbb);
-    csrs!(medeleg, 0xffff);
+    csrs!(mideleg, 0x222);
+    csrs!(medeleg, 0xb1ff);
     csrs!(sstatus, 0x8);
     csrs!(mstatus, 0x8);
     csrw!(stvec, ((trap::strap_entry as *const () as usize) + 3) & !3);
@@ -131,7 +131,7 @@ fn _start2(hartid: usize, _device_tree_blob: usize) {
     println!("xxx");
     unsafe {
 
-        csrw!(mepc, ((s_entry as *const () as usize) + 3) & !3);
+        csrw!(mepc, ((u_entry as *const () as usize) + 3) & !3);
         csrs!(mstatus, 1 << 11);
         asm!("mret" :::: "volatile");
     }
@@ -140,9 +140,10 @@ fn _start2(hartid: usize, _device_tree_blob: usize) {
     loop {}
 }
 
-fn s_entry() {
+fn u_entry() {
     println!("000");
     unsafe {
+        asm!("mret" :::: "volatile");
         asm!("ecall" :::: "volatile");
     }
     println!("000");
