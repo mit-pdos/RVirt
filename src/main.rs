@@ -18,8 +18,6 @@ mod riscv;
 mod print;
 mod trap;
 
-const HART_MEM_SIZE: usize = 32 * 1024 * 1024;
-
 #[naked]
 #[no_mangle]
 #[link_section = ".text.init"]
@@ -142,13 +140,15 @@ fn _start2(hartid: usize, _device_tree_blob: usize) {
 
 fn u_entry() {
     println!("000");
-//    csrw!(stval, 0xdeafbeef);
-//    println!("{:#x}", csrr!(stval));
+    csrw!(sscratch, 0xdeafbeef);
+    // println!("..");
     unsafe {
-        asm!("ecall" :::: "volatile");
-        asm!("ecall" :::: "volatile");
-        asm!("ecall" :::: "volatile");
+        // asm!("ecall" :::: "volatile");
+        // asm!("ecall" :::: "volatile");
+        // asm!("ecall" :::: "volatile");
     }
+    println!("111");
+    csrw!(sscratch, 0xdeafbeef);
     println!("000");
     loop {}
 }

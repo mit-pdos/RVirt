@@ -1,5 +1,6 @@
 use spin::Mutex;
 use riscv_decode::Instruction;
+use crate::csr;
 
 #[allow(unused)]
 mod constants {
@@ -19,16 +20,16 @@ mod constants {
     pub const STATUS_MXR: usize = 1 << 19;
     pub const STATUS_SD: usize = 1 << 31; // Only for RV32!
 
-    // pub const IP_SSIP: usize = 1 << 1;
-    // pub const IP_STIP: usize = 1 << 5;
-    // pub const IP_SEIP: usize = 1 << 9;
+    pub const IP_SSIP: usize = 1 << 1;
+    pub const IP_STIP: usize = 1 << 5;
+    pub const IP_SEIP: usize = 1 << 9;
 
-    // pub const IE_SSIE: usize = 1 << 1;
-    // pub const IE_STIE: usize = 1 << 5;
-    // pub const IE_SEIE: usize = 1 << 9;
+    pub const IE_SSIE: usize = 1 << 1;
+    pub const IE_STIE: usize = 1 << 5;
+    pub const IE_SEIE: usize = 1 << 9;
 
-    pub const MSTACK_BASE: usize = 0x80100000;
-    pub const SSTACK_BASE: usize = 0x80200000;
+    pub const MSTACK_BASE: usize = 0x80100000 - 16*4;
+    pub const SSTACK_BASE: usize = 0x80200000 - 32*4;
 }
 use self::constants::*;
 
@@ -111,7 +112,7 @@ pub unsafe fn mtrap() {
         (false, 1) => {
             println!("instruction access fault @ {:8x}", csrr!(mepc))
         }
-        (false, 2) => println!("illegal instruction: {:x}", csrr!(mtval)),
+        (false, 2) => println!("illegal instruction: {:x}", csrr!(mepc)),
         (false, 3) => println!("breakpoint"),
         (false, 4) => println!("load address misaligned"),
         (false, 5) => println!("load access fault"),
@@ -137,42 +138,71 @@ pub unsafe fn strap_entry() -> ! {
     asm!(".align 4
           csrw 0x140, sp
           li sp, 0x80200000
-          addi sp, sp, -16*4
-          sw ra, 0*4(sp)
-          sw t0, 1*4(sp)
-          sw t1, 2*4(sp)
-          sw t2, 3*4(sp)
-          sw t3, 4*4(sp)
-          sw t4, 5*4(sp)
-          sw t5, 6*4(sp)
-          sw t6, 7*4(sp)
-          sw a0, 8*4(sp)
-          sw a1, 9*4(sp)
-          sw a2, 10*4(sp)
-          sw a3, 11*4(sp)
-          sw a4, 12*4(sp)
-          sw a5, 13*4(sp)
-          sw a6, 14*4(sp)
-          sw a7, 15*4(sp)
+          addi sp, sp, -32*4
+
+          sw ra, 1*4(sp)
+          sw gp, 3*4(sp)
+          sw tp, 4*4(sp)
+          sw t0, 5*4(sp)
+          sw t1, 6*4(sp)
+          sw t2, 7*4(sp)
+          sw s0, 8*4(sp)
+          sw s1, 9*4(sp)
+          sw a0, 10*4(sp)
+          sw a1, 11*4(sp)
+          sw a2, 12*4(sp)
+          sw a3, 13*4(sp)
+          sw a4, 14*4(sp)
+          sw a5, 15*4(sp)
+          sw a6, 16*4(sp)
+          sw a7, 17*4(sp)
+          sw s2, 18*4(sp)
+          sw s3, 19*4(sp)
+          sw s4, 20*4(sp)
+          sw s5, 21*4(sp)
+          sw s6, 22*4(sp)
+          sw s7, 23*4(sp)
+          sw s8, 24*4(sp)
+          sw s9, 25*4(sp)
+          sw s10, 26*4(sp)
+          sw s11, 27*4(sp)
+          sw t3, 28*4(sp)
+          sw t4, 29*4(sp)
+          sw t5, 30*4(sp)
+          sw t6, 31*4(sp)
 
           jal ra, strap
 
-          lw ra, 0*4(sp)
-          lw t0, 1*4(sp)
-          lw t1, 2*4(sp)
-          lw t2, 3*4(sp)
-          lw t3, 4*4(sp)
-          lw t4, 5*4(sp)
-          lw t5, 6*4(sp)
-          lw t6, 7*4(sp)
-          lw a0, 8*4(sp)
-          lw a1, 9*4(sp)
-          lw a2, 10*4(sp)
-          lw a3, 11*4(sp)
-          lw a4, 12*4(sp)
-          lw a5, 13*4(sp)
-          lw a6, 14*4(sp)
-          lw a7, 15*4(sp)
+          lw ra, 1*4(sp)
+          lw gp, 3*4(sp)
+          lw tp, 4*4(sp)
+          lw t0, 5*4(sp)
+          lw t1, 6*4(sp)
+          lw t2, 7*4(sp)
+          lw s0, 8*4(sp)
+          lw s1, 9*4(sp)
+          lw a0, 10*4(sp)
+          lw a1, 11*4(sp)
+          lw a2, 12*4(sp)
+          lw a3, 13*4(sp)
+          lw a4, 14*4(sp)
+          lw a5, 15*4(sp)
+          lw a6, 16*4(sp)
+          lw a7, 17*4(sp)
+          lw s2, 18*4(sp)
+          lw s3, 19*4(sp)
+          lw s4, 20*4(sp)
+          lw s5, 21*4(sp)
+          lw s6, 22*4(sp)
+          lw s7, 23*4(sp)
+          lw s8, 24*4(sp)
+          lw s9, 25*4(sp)
+          lw s10, 26*4(sp)
+          lw s11, 27*4(sp)
+          lw t3, 28*4(sp)
+          lw t4, 29*4(sp)
+          lw t5, 30*4(sp)
+          lw t6, 31*4(sp)
           csrr sp, 0x140
           sret" :::: "volatile");
 
@@ -207,7 +237,7 @@ struct ShadowState {
     sie: usize,
     // sip: usize, -- checked dynamically on read
     stvec: usize,
-    scounteren: usize,
+    // scounteren: usize, -- Hard-wired to zero
     sscratch: usize,
     sepc: usize,
     scause: usize,
@@ -222,14 +252,13 @@ impl ShadowState {
             sstatus: 0,
             stvec: 0,
             sie: 0,
-            scounteren: 0,
             sscratch: 0,
             sepc: 0,
             scause: 0,
             stval: 0,
             satp: 0,
 
-            smode: false,
+            smode: true,
         }
     }
     pub fn push_sie(&mut self) {
@@ -237,14 +266,52 @@ impl ShadowState {
         self.sstatus.set(STATUS_SIE, false);
     }
     pub fn pop_sie(&mut self) {
-        self.sstatus.set(STATUS_SPIE, self.sstatus.get(STATUS_SIE));
-        self.sstatus.set(STATUS_SIE, false);
-        if self.sstatus & STATUS_SPIE != 0 {
-            self.sstatus |= STATUS_SIE;
-        } else {
-            self.sstatus &= !STATUS_SIE;
+        self.sstatus.set(STATUS_SIE, self.sstatus.get(STATUS_SPIE));
+        self.sstatus.set(STATUS_SPIE, true);
+    }
+
+    pub fn get_csr(&self, csr: u32) -> Option<usize> {
+        Some(match csr as usize {
+            csr::sstatus => self.sstatus,
+            csr::satp => self.satp,
+            csr::sie => self.sie,
+            csr::stvec => self.stvec,
+            csr::sscratch => self.sscratch,
+            csr::sepc => self.sepc,
+            csr::scause => self.scause,
+            csr::stval => self.stval,
+            csr::sip => csrr!(sip),
+            csr::sedeleg => 0,
+            csr::sideleg => 0,
+            csr::scounteren => 0,
+            _ => return None,
+        })
+    }
+
+    pub fn set_csr(&mut self, csr: u32, value: usize) -> bool {
+        match csr as usize {
+            csr::sstatus => {
+                self.sstatus = value;
+                // TODO: apply any side effects
+            }
+            csr::satp => {
+                self.satp = value;
+                // TODO: apply any side effects
+            }
+            csr::sie => self.sie = value & (IE_SEIE | IE_STIE | IE_SSIE),
+            csr::stvec => self.stvec = value & !0x2,
+            csr::sscratch => self.sscratch = value,
+            csr::sepc => self.sepc = value,
+            csr::scause => self.scause = value,
+            csr::stval => self.stval = value,
+            csr::sip => csrs!(sip, value & IP_SSIP),
+            csr::sedeleg |
+            csr::sideleg |
+            csr::scounteren => {}
+            _ => return false,
         }
-        self.sstatus |= STATUS_SPIE;
+
+        return true;
     }
 }
 
@@ -254,13 +321,15 @@ static SHADOW_STATE: Mutex<ShadowState> = Mutex::new(ShadowState::new());
 pub unsafe fn strap() {
     let cause = csrr!(scause);
     let status = csrr!(sstatus);
-    let mut state = SHADOW_STATE.lock();
 
     if status.get(STATUS_SPP) {
         println!("Trap from within hypervisor?!");
+        println!("sepc = {:#x}", csrr!(sepc));
+        println!("cause = {}", cause);
         loop {}
     }
 
+    let mut state = SHADOW_STATE.lock();
     if (cause as isize) < 0 {
         let enabled = state.sstatus.get(STATUS_SIE);
         let unmasked = state.sie & (1 << (cause & 0xff)) != 0;
@@ -270,13 +339,12 @@ pub unsafe fn strap() {
     } else if cause == 12 || cause == 13 || cause == 15 {
         // TODO: Handle page fault
     } else if cause == 2 && state.smode {
-        // Handle illegal instruction
         let pc = csrr!(sepc);
         let il = *(pc as *const u16);
         let len = riscv_decode::instruction_length(il);
         let instruction = match len {
             2 => il as u32,
-            4 => il as u32 + (*((pc + 2) as *const u16) as u32) << 16,
+            4 => il as u32 | ((*((pc + 2) as *const u16) as u32) << 16),
             _ => unreachable!(),
         };
 
@@ -287,23 +355,49 @@ pub unsafe fn strap() {
                 state.sstatus.set(STATUS_SPP, false);
                 csrw!(sepc, state.sepc);
             }
-            Some(Instruction::SfenceVma(rtype)) => {
+            Some(Instruction::SfenceVma(_r)) => {
                 // TODO
+            }
+            Some(Instruction::Csrrw(i)) => if let Some(prev) = state.get_csr(i.csr()) {
+                state.set_csr(i.csr(), get_register(i.rs1()));
+                set_register(i.rd(), prev);
+            }
+            Some(Instruction::Csrrs(i)) => if let Some(prev) = state.get_csr(i.csr()) {
+                state.set_csr(i.csr(), prev | get_register(i.rs1()));
+                set_register(i.rd(), prev);
+            }
+            Some(Instruction::Csrrc(i)) => if let Some(prev) = state.get_csr(i.csr()) {
+                state.set_csr(i.csr(), prev & !get_register(i.rs1()));
+                set_register(i.rd(), prev);
+            }
+            Some(Instruction::Csrrwi(i)) => if let Some(prev) = state.get_csr(i.csr()) {
+                state.set_csr(i.csr(), i.zimm() as usize);
+                set_register(i.rd(), prev);
+            }
+            Some(Instruction::Csrrsi(i)) => if let Some(prev) = state.get_csr(i.csr()) {
+                state.set_csr(i.csr(), prev | (i.zimm() as usize));
+                set_register(i.rd(), prev);
+            }
+            Some(Instruction::Csrrci(i)) => if let Some(prev) = state.get_csr(i.csr()) {
+                state.set_csr(i.csr(), prev & !(i.zimm() as usize));
+                set_register(i.rd(), prev);
             }
             _ => forward_exception(&mut state, cause, pc),
         }
+        csrw!(sepc, pc + len);
     } else if cause == 8 && state.smode {
+        println!("SMode");
         asm!("
-          lw a0, 8*4($0)
-          lw a1, 9*4($0)
-          lw a2, 10*4($0)
-          lw a3, 11*4($0)
-          lw a4, 12*4($0)
-          lw a5, 13*4($0)
-          lw a6, 14*4($0)
-          lw a7, 15*4($0)
+          lw a0, 10*4($0)
+          lw a1, 11*4($0)
+          lw a2, 12*4($0)
+          lw a3, 13*4($0)
+          lw a4, 14*4($0)
+          lw a5, 15*4($0)
+          lw a6, 16*4($0)
+          lw a7, 17*4($0)
           ecall
-          sw a7, 15*4($0)"
+          sw a7, 17*4($0)"
              :: "r"(SSTACK_BASE) : "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7": "volatile");
         csrw!(sepc, csrr!(sepc) + 4);
     } else {
@@ -334,4 +428,21 @@ fn forward_exception(state: &mut ShadowState, cause: usize, sepc: usize) {
     state.stval = csrr!(stval);
     state.smode = true;
     csrw!(sepc, state.stvec & TVEC_BASE);
+}
+
+fn set_register(reg: u32, value: usize) {
+    match reg {
+        0 => {},
+        1 | 3..=31 => unsafe { *(SSTACK_BASE as *mut u32).offset(reg as isize) = value as u32; }
+        2 => csrw!(sscratch, value),
+        _ => unreachable!(),
+    }
+}
+fn get_register(reg: u32) -> usize {
+    match reg {
+        0 => 0,
+        1 | 3..=31 => unsafe { *(SSTACK_BASE as *const u32).offset(reg as isize) as usize },
+        2 => csrr!(sscratch),
+        _ => unreachable!(),
+    }
 }
