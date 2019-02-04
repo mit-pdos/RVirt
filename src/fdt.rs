@@ -5,24 +5,26 @@ const FDT_PROP: u32 = 0x03000000;
 const FDT_NOP: u32 = 0x04000000;
 const FDT_END: u32 = 0x09000000;
 
-const VM_RESERVATION_SIZE: usize = 0x4000000; // 64MB
+pub const VM_RESERVATION_SIZE: usize = 0x4000000; // 64MB
 
 #[derive(Default)]
 pub struct MachineMeta {
     // Host physical memory
-    hpm_offset: u64,
-    hpm_size: u64,
+    pub hpm_offset: u64,
+    pub hpm_size: u64,
 
     // Guest physical memory
-    gpm_offset: u64,
-    gpm_size: u64,
+    pub gpm_offset: u64,
+    pub gpm_size: u64,
 
-    initrd_start: Option<u64>,
-    initrd_end: Option<u64>,
+    pub guest_shift: u64,
+
+    pub initrd_start: Option<u64>,
+    pub initrd_end: Option<u64>,
 }
 
 #[repr(C)]
-pub struct Header {
+pub struct Fdt {
     magic: u32,
     total_size: u32,
     off_dt_struct: u32,
@@ -35,7 +37,7 @@ pub struct Header {
     size_dt_struct: u32,
 }
 #[allow(unused)]
-impl Header {
+impl Fdt {
     pub unsafe fn new(addr: usize) -> &'static Self {
         &*(addr as *const Self)
     }
@@ -163,7 +165,10 @@ impl Header {
         let mut initrd_start: Option<usize> = None;
         let mut initrd_end: Option<usize> = None;
 
-        let mut meta = MachineMeta::default();
+        let mut meta = MachineMeta {
+            guest_shift: VM_RESERVATION_SIZE as u64,
+            .. Default::default()
+        };
 
         let mut indent = 0;
         let mut device_name = "";

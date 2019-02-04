@@ -13,6 +13,7 @@ mod riscv;
 mod print;
 
 mod csr;
+mod elf;
 mod fdt;
 mod trap;
 
@@ -47,16 +48,22 @@ fn _start2(_hartid: usize, device_tree_blob: usize) {
     csrw!(mie, 0x888);
 
     unsafe {
-        let header = Header::new(device_tree_blob);
-        assert!(header.magic_valid());
-        assert!(header.version() >= 17 && header.last_comp_version() <= 17);
+        let fdt = Fdt::new(device_tree_blob);
+        assert!(fdt.magic_valid());
+        assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
+        // fdt.print();
+        let meta = fdt.process();
         // header.print();
-        let _meta = header.process();
-        // header.print();
-    }
 
-    unsafe {
-        csrw!(mepc, ((u_entry as *const () as usize) + 3) & !3);
+        if let (Some(start), Some(_end)) = (meta.initrd_start, meta.initrd_end) {
+            println!("Loading guest kernel... {:#x}-{:#x}", start, _end);
+            let entry = elf::load_elf(start as *const u8, (meta.hpm_offset + meta.guest_shift) as *mut u8);
+            println!("Booting guest kernel...");
+            csrw!(mepc, ((entry as usize) + 3) & !3);
+        } else {
+            csrw!(mepc, ((u_entry as *const () as usize) + 3) & !3);
+        }
+
 //        csrs!(mstatus, 1 << 11);
         asm!("mret" :::: "volatile");
     }
