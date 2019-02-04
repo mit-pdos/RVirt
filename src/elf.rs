@@ -39,8 +39,8 @@ pub struct Elf64 {
 	machine: u16,
 	version: u32,
 	entry: u64,
-	phoff: u32,
-	shoff: u32,
+	phoff: u64,
+	shoff: u64,
 	flags: u32,
 	ehsize: u16,
 	phentsize: u16,
@@ -75,14 +75,12 @@ pub unsafe fn load_elf(data: *const u8, base_address: *mut u8) -> *const u8 {
 
     for i in 0..(elf.phnum as usize) {
         let ph = &*(data.add(elf.phoff as usize + i * elf.phentsize as usize) as *const ProgramHeader64);
-        println!("PH: {:#?}", ph);
 
         if ph.type_ == ELF_PROG_LOAD {
             if ph.file_size > 0 {
                 let dst = base_address.add(ph.pa as usize);
                 let src = data.add(ph.offset as usize);
                 core::ptr::copy(src, dst, ph.file_size as usize);
-                println!("Writing section @ {:#x} (len={:x})", dst as usize, ph.file_size);
             }
             if ph.memory_size > ph.file_size {
                 let dst = base_address.add((ph.pa + ph.file_size) as usize);
