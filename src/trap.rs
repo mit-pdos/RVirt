@@ -1,6 +1,6 @@
 use spin::Mutex;
 use riscv_decode::Instruction;
-use crate::csr;
+use crate::{csr, pmap};
 
 #[allow(unused)]
 mod constants {
@@ -32,6 +32,8 @@ mod constants {
     pub const SSTACK_BASE: usize = 0x80200000 - 32*4;
 }
 use self::constants::*;
+
+pub const MAX_TSTACK_ADDR: usize = 0x80200000;
 
 trait UsizeBits {
     fn get(&self, mask: Self) -> bool;
@@ -229,7 +231,7 @@ pub unsafe fn strap_entry() -> ! {
 // }
 
 #[derive(Default)]
-struct ShadowState {
+pub struct ShadowState {
     // sedeleg: usize, -- Hard-wired to zero
     // sideleg: usize, -- Hard-wired to zero
 
@@ -355,9 +357,7 @@ pub unsafe fn strap() {
                 state.sstatus.set(STATUS_SPP, false);
                 csrw!(sepc, state.sepc);
             }
-            Some(Instruction::SfenceVma(_r)) => {
-                // TODO
-            }
+            Some(fence @ Instruction::SfenceVma(_)) => pmap::handle_sfence_vma(&mut state, fence),
             Some(Instruction::Csrrw(i)) => if let Some(prev) = state.get_csr(i.csr()) {
                 state.set_csr(i.csr(), get_register(i.rs1()));
                 set_register(i.rd(), prev);

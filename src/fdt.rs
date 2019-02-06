@@ -216,6 +216,7 @@ impl Fdt {
                                 meta.hpm_offset = region.offset();
                                 meta.hpm_size = region.size();
                                 region.size = region.size().checked_sub(VM_RESERVATION_SIZE as u64).unwrap().swap_bytes();
+                                // region.offset = (region.offset() + VM_RESERVATION_SIZE as u64).swap_bytes();
                                 meta.gpm_offset = region.offset();
                                 meta.gpm_size = region.size();
                             }

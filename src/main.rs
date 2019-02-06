@@ -15,6 +15,7 @@ mod print;
 mod csr;
 mod elf;
 mod fdt;
+mod pmap;
 mod trap;
 
 #[lang = "eh_personality"] extern fn eh_personality() {}
@@ -37,7 +38,15 @@ fn _start() {
     _start2(hartid, device_tree_blob);
 }
 
+#[no_mangle]
+#[link_section = ".htif"]
+static mut tohost: u64 = 0;
+#[no_mangle]
+#[link_section = ".htif"]
+static mut fromhost: u64 = 0;
+
 fn _start2(_hartid: usize, device_tree_blob: usize) {
+    unsafe { tohost = 1 << 56 | 1 << 48 | 'Y' as u64; }
     csrs!(mideleg, 0x222);
     csrs!(medeleg, 0xb1ff);
     csrs!(sstatus, 0x8);
@@ -52,12 +61,14 @@ fn _start2(_hartid: usize, device_tree_blob: usize) {
         assert!(fdt.magic_valid());
         assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
         // fdt.print();
-        let meta = fdt.process();
+        let machine = fdt.process();
         // header.print();
 
-        if let (Some(start), Some(_end)) = (meta.initrd_start, meta.initrd_end) {
+        pmap::init(&machine);
+
+        if let (Some(start), Some(_end)) = (machine.initrd_start, machine.initrd_end) {
             println!("Loading guest kernel... {:#x}-{:#x}", start, _end);
-            let entry = elf::load_elf(start as *const u8, (meta.hpm_offset + meta.guest_shift) as *mut u8);
+            let entry = elf::load_elf(start as *const u8, (machine.hpm_offset + machine.guest_shift) as *mut u8);
             println!("Booting guest kernel...");
             csrw!(mepc, ((entry as usize) + 3) & !3);
         } else {

@@ -70,7 +70,7 @@ SECTIONS
   /* bss: Uninitialized writeable data section */
   . = .;
   _bss_start = .;
-  .bss : 
+  .bss :
   {
     *(.bss)
     *(.bss.*)
@@ -79,5 +79,6 @@ SECTIONS
     *(COMMON)
   }
 
+  . = ALIGN(0x1000);
   _end = .;
 }

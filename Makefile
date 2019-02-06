@@ -12,3 +12,6 @@ qemu: debug
 
 qemu-gdb: debug
 	qemu-system-riscv32 -s -S -smp 2 -machine virt -kernel target/riscv32imac-unknown-none-elf/debug/svpn -nographic
+
+qemux: debug
+	/home/jonathan/git/qemu/build/riscv32-softmmu/qemu-system-riscv32 -machine virt -kernel target/riscv32imac-unknown-none-elf/debug/svpn -nographic -initrd /home/jonathan/Downloads/fedora-vmlinux -m 2048
