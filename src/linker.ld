@@ -5,9 +5,18 @@ SECTIONS
 {
   . = 0x80000000;
 
-  .text :
+  _text_init_start = .;
+  .text.init :
   {
     *(.text.init)
+
+  }
+  . = ALIGN(0x1000);
+  _text_init_end = .;
+
+  . = 0x80000000 + (_text_init_end - _text_init_start);
+  .text : AT(_text_init_end)
+  {
     *(.text) *(.text.*)
     *(.gnu.linkonce.t.*)
   }
