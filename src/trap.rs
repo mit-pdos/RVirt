@@ -18,7 +18,7 @@ mod constants {
     pub const STATUS_XS1: usize = 1 << 16;
     pub const STATUS_SUM: usize = 1 << 18;
     pub const STATUS_MXR: usize = 1 << 19;
-    pub const STATUS_SD: usize = 1 << 31; // Only for RV32!
+    pub const STATUS_SD: usize = 1 << 63;
 
     pub const IP_SSIP: usize = 1 << 1;
     pub const IP_STIP: usize = 1 << 5;
@@ -28,8 +28,8 @@ mod constants {
     pub const IE_STIE: usize = 1 << 5;
     pub const IE_SEIE: usize = 1 << 9;
 
-    pub const MSTACK_BASE: usize = 0x80100000 - 16*4;
-    pub const SSTACK_BASE: usize = 0x80200000 - 32*4;
+    pub const MSTACK_BASE: usize = 0x80100000 - 16*8;
+    pub const SSTACK_BASE: usize = 0x80200000 - 32*8;
 }
 use self::constants::*;
 
@@ -56,46 +56,48 @@ impl UsizeBits for usize {
 // 0x140 = sscratch
 
 #[naked]
+#[no_mangle]
+#[link_section = ".text.trap"]
 pub unsafe fn mtrap_entry() -> ! {
     asm!(".align 4
           csrw 0x340, sp
           li sp, 0x80100000
-          addi sp, sp, -16*4
-          sw ra, 0*4(sp)
-          sw t0, 1*4(sp)
-          sw t1, 2*4(sp)
-          sw t2, 3*4(sp)
-          sw t3, 4*4(sp)
-          sw t4, 5*4(sp)
-          sw t5, 6*4(sp)
-          sw t6, 7*4(sp)
-          sw a0, 8*4(sp)
-          sw a1, 9*4(sp)
-          sw a2, 10*4(sp)
-          sw a3, 11*4(sp)
-          sw a4, 12*4(sp)
-          sw a5, 13*4(sp)
-          sw a6, 14*4(sp)
-          sw a7, 15*4(sp)
+          addi sp, sp, -16*8
+          sd ra, 0*8(sp)
+          sd t0, 1*8(sp)
+          sd t1, 2*8(sp)
+          sd t2, 3*8(sp)
+          sd t3, 4*8(sp)
+          sd t4, 5*8(sp)
+          sd t5, 6*8(sp)
+          sd t6, 7*8(sp)
+          sd a0, 8*8(sp)
+          sd a1, 9*8(sp)
+          sd a2, 10*8(sp)
+          sd a3, 11*8(sp)
+          sd a4, 12*8(sp)
+          sd a5, 13*8(sp)
+          sd a6, 14*8(sp)
+          sd a7, 15*8(sp)
 
           jal ra, mtrap
 
-          lw ra, 0*4(sp)
-          lw t0, 1*4(sp)
-          lw t1, 2*4(sp)
-          lw t2, 3*4(sp)
-          lw t3, 4*4(sp)
-          lw t4, 5*4(sp)
-          lw t5, 6*4(sp)
-          lw t6, 7*4(sp)
-          lw a0, 8*4(sp)
-          lw a1, 9*4(sp)
-          lw a2, 10*4(sp)
-          lw a3, 11*4(sp)
-          lw a4, 12*4(sp)
-          lw a5, 13*4(sp)
-          lw a6, 14*4(sp)
-          lw a7, 15*4(sp)
+          ld ra, 0*8(sp)
+          ld t0, 1*8(sp)
+          ld t1, 2*8(sp)
+          ld t2, 3*8(sp)
+          ld t3, 4*8(sp)
+          ld t4, 5*8(sp)
+          ld t5, 6*8(sp)
+          ld t6, 7*8(sp)
+          ld a0, 8*8(sp)
+          ld a1, 9*8(sp)
+          ld a2, 10*8(sp)
+          ld a3, 11*8(sp)
+          ld a4, 12*8(sp)
+          ld a5, 13*8(sp)
+          ld a6, 14*8(sp)
+          ld a7, 15*8(sp)
           csrr sp, 0x340
           mret" :::: "volatile");
 
@@ -136,75 +138,84 @@ pub unsafe fn mtrap() {
 }
 
 #[naked]
+#[no_mangle]
+#[link_section = ".text.trap"]
 pub unsafe fn strap_entry() -> ! {
     asm!(".align 4
+          csrr t0, 0x140
+          csrr t1, 0x141
+          csrr t2, 0x142
+          csrr t3, 0x143
+          csrr t4, 0x144
+
+l1: j l1
           csrw 0x140, sp
           li sp, 0x80200000
-          addi sp, sp, -32*4
+          addi sp, sp, -32*8
 
-          sw ra, 1*4(sp)
-          sw gp, 3*4(sp)
-          sw tp, 4*4(sp)
-          sw t0, 5*4(sp)
-          sw t1, 6*4(sp)
-          sw t2, 7*4(sp)
-          sw s0, 8*4(sp)
-          sw s1, 9*4(sp)
-          sw a0, 10*4(sp)
-          sw a1, 11*4(sp)
-          sw a2, 12*4(sp)
-          sw a3, 13*4(sp)
-          sw a4, 14*4(sp)
-          sw a5, 15*4(sp)
-          sw a6, 16*4(sp)
-          sw a7, 17*4(sp)
-          sw s2, 18*4(sp)
-          sw s3, 19*4(sp)
-          sw s4, 20*4(sp)
-          sw s5, 21*4(sp)
-          sw s6, 22*4(sp)
-          sw s7, 23*4(sp)
-          sw s8, 24*4(sp)
-          sw s9, 25*4(sp)
-          sw s10, 26*4(sp)
-          sw s11, 27*4(sp)
-          sw t3, 28*4(sp)
-          sw t4, 29*4(sp)
-          sw t5, 30*4(sp)
-          sw t6, 31*4(sp)
+          sd ra, 1*8(sp)
+          sd gp, 3*8(sp)
+          sd tp, 4*8(sp)
+          sd t0, 5*8(sp)
+          sd t1, 6*8(sp)
+          sd t2, 7*8(sp)
+          sd s0, 8*8(sp)
+          sd s1, 9*8(sp)
+          sd a0, 10*8(sp)
+          sd a1, 11*8(sp)
+          sd a2, 12*8(sp)
+          sd a3, 13*8(sp)
+          sd a4, 14*8(sp)
+          sd a5, 15*8(sp)
+          sd a6, 16*8(sp)
+          sd a7, 17*8(sp)
+          sd s2, 18*8(sp)
+          sd s3, 19*8(sp)
+          sd s4, 20*8(sp)
+          sd s5, 21*8(sp)
+          sd s6, 22*8(sp)
+          sd s7, 23*8(sp)
+          sd s8, 24*8(sp)
+          sd s9, 25*8(sp)
+          sd s10, 26*8(sp)
+          sd s11, 27*8(sp)
+          sd t3, 28*8(sp)
+          sd t4, 29*8(sp)
+          sd t5, 30*8(sp)
+          sd t6, 31*8(sp)
 
           jal ra, strap
 
-          lw ra, 1*4(sp)
-          lw gp, 3*4(sp)
-          lw tp, 4*4(sp)
-          lw t0, 5*4(sp)
-          lw t1, 6*4(sp)
-          lw t2, 7*4(sp)
-          lw s0, 8*4(sp)
-          lw s1, 9*4(sp)
-          lw a0, 10*4(sp)
-          lw a1, 11*4(sp)
-          lw a2, 12*4(sp)
-          lw a3, 13*4(sp)
-          lw a4, 14*4(sp)
-          lw a5, 15*4(sp)
-          lw a6, 16*4(sp)
-          lw a7, 17*4(sp)
-          lw s2, 18*4(sp)
-          lw s3, 19*4(sp)
-          lw s4, 20*4(sp)
-          lw s5, 21*4(sp)
-          lw s6, 22*4(sp)
-          lw s7, 23*4(sp)
-          lw s8, 24*4(sp)
-          lw s9, 25*4(sp)
-          lw s10, 26*4(sp)
-          lw s11, 27*4(sp)
-          lw t3, 28*4(sp)
-          lw t4, 29*4(sp)
-          lw t5, 30*4(sp)
-          lw t6, 31*4(sp)
+          ld ra, 1*8(sp)
+          ld gp, 3*8(sp)
+          ld tp, 4*8(sp)
+          ld t0, 5*8(sp)
+          ld t1, 6*8(sp)
+          ld t2, 7*8(sp)
+          ld s0, 8*8(sp)
+          ld s1, 9*8(sp)
+          ld a0, 10*8(sp)
+          ld a1, 11*8(sp)
+          ld a2, 12*8(sp)
+          ld a3, 13*8(sp)
+          ld a4, 14*8(sp)
+          ld a5, 15*8(sp)
+          ld a6, 16*8(sp)
+          ld a7, 17*8(sp)
+          ld s2, 18*8(sp)
+          ld s3, 19*8(sp)
+          ld s4, 20*8(sp)
+          ld s5, 21*8(sp)
+          ld s6, 22*8(sp)
+          ld s7, 23*8(sp)
+          ld s8, 24*8(sp)
+          ld s9, 25*8(sp)
+          ld s10, 26*8(sp)
+          ld s11, 27*8(sp)
+          ld t3, 28*8(sp)
+          ld t4, 29*8(sp)
+          ld t5, 30*8(sp)
+          ld t6, 31*8(sp)
           csrr sp, 0x140
           sret" :::: "volatile");
 

@@ -5,17 +5,34 @@ SECTIONS
 {
   . = 0x80000000;
 
-  _text_init_start = .;
-  .text.init :
-  {
+  _init_start = .;
+  .text.init : {
     *(.text.init)
-
   }
   . = ALIGN(0x1000);
-  _text_init_end = .;
+  .data.statics : {
+     *(.data.statics)
+  }
 
-  . = 0x80000000 + (_text_init_end - _text_init_start);
-  .text : AT(_text_init_end)
+  /* reserve space for boot page tables */
+  . = 0x80010000;
+
+  . = 0x80020000;
+  .text.init2 : {
+    *(.text.init2)
+  }
+
+  . = 0x80030000;
+  .text.mtrap : {
+     *(.text.mtrap)
+  }
+
+  . = 0x80200000;
+  _init_end = .;
+
+  . = 0x40200000;
+
+  .text : AT(_init_end)
   {
     *(.text) *(.text.*)
     *(.gnu.linkonce.t.*)
@@ -90,4 +107,7 @@ SECTIONS
 
   . = ALIGN(0x1000);
   _end = .;
+
+  mtrap_entry_offset = mtrap_entry - 0x80000000;
+  strap_entry_offset = strap_entry - 0x80000000;
 }
