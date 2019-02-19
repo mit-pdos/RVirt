@@ -3,7 +3,7 @@ use riscv_decode::Instruction;
 use crate::{csr, pmap};
 
 #[allow(unused)]
-mod constants {
+pub mod constants {
     pub const TVEC_MODE: usize = 0x3;
     pub const TVEC_BASE: usize = !TVEC_MODE;
 
@@ -20,6 +20,10 @@ mod constants {
     pub const STATUS_MXR: usize = 1 << 19;
     pub const STATUS_SD: usize = 1 << 63;
 
+    pub const STATUS_MPP_M: usize = 3 << 11;
+    pub const STATUS_MPP_S: usize = 1 << 11;
+    pub const STATUS_MPP_U: usize = 0 << 11;
+
     pub const IP_SSIP: usize = 1 << 1;
     pub const IP_STIP: usize = 1 << 5;
     pub const IP_SEIP: usize = 1 << 9;
@@ -28,12 +32,12 @@ mod constants {
     pub const IE_STIE: usize = 1 << 5;
     pub const IE_SEIE: usize = 1 << 9;
 
-    pub const MSTACK_BASE: usize = 0x80100000 - 16*8;
-    pub const SSTACK_BASE: usize = 0x80200000 - 32*8;
+    pub const MSTACK_BASE: usize = 0x80300000 - 16*8;
+    pub const SSTACK_BASE: usize = 0x80400000 - 32*8;
 }
 use self::constants::*;
 
-pub const MAX_TSTACK_ADDR: usize = 0x80200000;
+pub const MAX_TSTACK_ADDR: usize = 0x80400000;
 
 trait UsizeBits {
     fn get(&self, mask: Self) -> bool;
@@ -57,11 +61,10 @@ impl UsizeBits for usize {
 
 #[naked]
 #[no_mangle]
-#[link_section = ".text.trap"]
 pub unsafe fn mtrap_entry() -> ! {
     asm!(".align 4
           csrw 0x340, sp
-          li sp, 0x80100000
+          li sp, 0x80300000
           addi sp, sp, -16*8
           sd ra, 0*8(sp)
           sd t0, 1*8(sp)
@@ -139,18 +142,11 @@ pub unsafe fn mtrap() {
 
 #[naked]
 #[no_mangle]
-#[link_section = ".text.trap"]
+#[link_section = ".text.strap_entry"]
 pub unsafe fn strap_entry() -> ! {
     asm!(".align 4
-          csrr t0, 0x140
-          csrr t1, 0x141
-          csrr t2, 0x142
-          csrr t3, 0x143
-          csrr t4, 0x144
-
-l1: j l1
           csrw 0x140, sp
-          li sp, 0x80200000
+          li sp, 0x80400000
           addi sp, sp, -32*8
 
           sd ra, 1*8(sp)
@@ -332,6 +328,7 @@ static SHADOW_STATE: Mutex<ShadowState> = Mutex::new(ShadowState::new());
 
 #[no_mangle]
 pub unsafe fn strap() {
+    println!("Trap!");
     let cause = csrr!(scause);
     let status = csrr!(sstatus);
 
@@ -341,6 +338,8 @@ pub unsafe fn strap() {
         println!("cause = {}", cause);
         loop {}
     }
+        println!("sepc = {:#x}", csrr!(sepc));
+        println!("cause = {}", cause);
 
     let mut state = SHADOW_STATE.lock();
     if (cause as isize) < 0 {
