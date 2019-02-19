@@ -44,12 +44,7 @@ unsafe fn _start() {
 
 #[link_section = ".text.init"]
 unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
-    let root_pt: u64 = 0x80010000;
-    *((root_pt + 0) as *mut u64) = 0x00000000 | 0xdf;
-    *((root_pt + 8) as *mut u64) = 0x20000000 | 0xdf;
-    *((root_pt + 16) as *mut u64) = 0x20000000 | 0xdf;
-    *((root_pt + 24) as *mut u64) = 0x30000000 | 0xdf;
-
+    // Initialize some control registers
     csrs!(mideleg, 0x222);
     csrs!(medeleg, 0xb1ff);
     csrw!(mtvec, mtrap_entry_offset + 0x80000000);
@@ -57,7 +52,13 @@ unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
     csrs!(mstatus, STATUS_MPP_S | STATUS_SUM);
     csrw!(mepc, sstart as usize);
 
-    csrw!(satp, 8 << 60 | (root_pt >> 12) as usize);
+    // Minimal page table to boot into S mode.
+    *(pmap::ROOT as *mut u64) = (pmap::HVA_ROOT >> 2) | 0x01;
+    *((pmap::HVA_ROOT + 0) as *mut u64) = 0x00000000 | 0xdf;
+    *((pmap::HVA_ROOT + 8) as *mut u64) = 0x20000000 | 0xdf;
+    *((pmap::HVA_ROOT + 16) as *mut u64) = 0x20000000 | 0xdf;
+    *((pmap::HVA_ROOT + 24) as *mut u64) = 0x30000000 | 0xdf;
+    csrw!(satp, 9 << 60 | (pmap::ROOT >> 12) as usize);
 
     asm!("mv a1, $0
           mret" :: "r"(device_tree_blob) :: "volatile");

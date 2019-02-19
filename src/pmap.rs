@@ -23,6 +23,14 @@ const PTE_RWX: u64 = PTE_READ | PTE_WRITE | PTE_EXECUTE;
 
 const GUEST_PPN_OFFSET: u64 = fdt::VM_RESERVATION_SIZE as u64 / PAGE_SIZE;
 
+pub const ROOT: u64 = 0x80010000;
+pub const HVA_ROOT: u64 = 0x80011000;
+pub const HGA_ROOT: u64 = 0x80012000;
+pub const GPA_ROOT: u64 = 0x80013000;
+pub const UVA_ROOT: u64 = 0x80014000;
+pub const KVA_ROOT: u64 = 0x80015000;
+pub const MVA_ROOT: u64 = 0x80016000;
+
 /// Host physical address
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 struct Paddr(u64);
