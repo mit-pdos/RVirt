@@ -152,9 +152,9 @@ pub fn init(machine: &MachineMeta) {
         *((ROOT + 0x20) as *mut u64) = (MVA_ROOT >> 2) | PTE_VALID;
         *((ROOT + 0x28) as *mut u64) = (MPA_ROOT >> 2) | PTE_VALID;
 
-        *((HVA_ROOT + 0x00) as *mut u64) = 0x00000000 | PTE_AD | PTE_USER | PTE_RWXV;
-        *((HVA_ROOT + 0x08) as *mut u64) = 0x20000000 | PTE_AD | PTE_USER | PTE_RWXV;
-        *((HVA_ROOT + 0x10) as *mut u64) = 0x20000000 | PTE_AD | PTE_USER | PTE_RWXV;
+        *((HVA_ROOT + 0x00) as *mut u64) = 0x00000000 | PTE_AD | PTE_RWXV;
+        *((HVA_ROOT + 0x08) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
+        *((HVA_ROOT + 0x10) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
         *((HVA_ROOT + 0x18) as *mut u64) = 0x30000000 | PTE_AD | PTE_RWXV;
 
         *((MPA_ROOT + 0x00) as *mut u64) = 0x00000000 | PTE_AD | PTE_USER | PTE_RWXV;

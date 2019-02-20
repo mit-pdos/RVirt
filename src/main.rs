@@ -55,10 +55,10 @@ unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
     csrw!(mepc, sstart as usize);
 
     // Minimal page table to boot into S mode.
-    *((pmap::BOOT_PAGE_TABLE + 0) as *mut u64) = 0x00000000 | 0xef;
-    *((pmap::BOOT_PAGE_TABLE + 8) as *mut u64) = 0x20000000 | 0xef;
-    *((pmap::BOOT_PAGE_TABLE + 16) as *mut u64) = 0x20000000 | 0xef;
-    *((pmap::BOOT_PAGE_TABLE + 24) as *mut u64) = 0x30000000 | 0xef;
+    *((pmap::BOOT_PAGE_TABLE + 0) as *mut u64) = 0x00000000 | 0xcf;
+    *((pmap::BOOT_PAGE_TABLE + 8) as *mut u64) = 0x20000000 | 0xcf;
+    *((pmap::BOOT_PAGE_TABLE + 16) as *mut u64) = 0x20000000 | 0xcf;
+    *((pmap::BOOT_PAGE_TABLE + 24) as *mut u64) = 0x30000000 | 0xcf;
     csrw!(satp, 8 << 60 | (pmap::BOOT_PAGE_TABLE >> 12) as usize);
 
     asm!("mv a1, $0
