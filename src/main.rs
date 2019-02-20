@@ -49,9 +49,8 @@ unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
     csrs!(mideleg, 0x222);
     csrs!(medeleg, 0xb1ff);
     csrw!(mtvec, mtrap_entry_offset + 0x80000000);
-    csrw!(stvec, 0x80000000);
     csrw!(mie, 0x888);
-    csrs!(mstatus, STATUS_MPP_S | STATUS_SUM);
+    csrs!(mstatus, STATUS_MPP_S);
     csrw!(mepc, sstart as usize);
 
     // Minimal page table to boot into S mode.

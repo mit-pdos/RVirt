@@ -175,6 +175,7 @@ pub fn init(machine: &MachineMeta) {
     }
 
     csrw!(satp, 9 << 60 | (ROOT >> 12) as usize);
+    csrs!(sstatus, crate::trap::constants::STATUS_SUM);
 }
 
 pub fn handle_sfence_vma(state: &mut ShadowState, instruction: Instruction) {
