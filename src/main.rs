@@ -1,12 +1,13 @@
 #![no_std]
 #![feature(asm)]
-#![feature(lang_items)]
-#![feature(naked_functions)]
-#![feature(start)]
 #![feature(const_str_len)]
+#![feature(global_asm)]
+#![feature(lang_items)]
+#![feature(linkage)]
+#![feature(naked_functions)]
 #![feature(proc_macro_hygiene)]
 #![feature(ptr_offset_from)]
-#![feature(linkage)]
+#![feature(start)]
 
 #[macro_use]
 mod riscv;
@@ -48,15 +49,16 @@ unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
     csrs!(mideleg, 0x222);
     csrs!(medeleg, 0xb1ff);
     csrw!(mtvec, mtrap_entry_offset + 0x80000000);
+    csrw!(stvec, 0x80000000);
     csrw!(mie, 0x888);
     csrs!(mstatus, STATUS_MPP_S | STATUS_SUM);
     csrw!(mepc, sstart as usize);
 
     // Minimal page table to boot into S mode.
-    *((pmap::BOOT_PAGE_TABLE + 0) as *mut u64) = 0x00000000 | 0xdf;
-    *((pmap::BOOT_PAGE_TABLE + 8) as *mut u64) = 0x20000000 | 0xdf;
-    *((pmap::BOOT_PAGE_TABLE + 16) as *mut u64) = 0x20000000 | 0xdf;
-    *((pmap::BOOT_PAGE_TABLE + 24) as *mut u64) = 0x30000000 | 0xdf;
+    *((pmap::BOOT_PAGE_TABLE + 0) as *mut u64) = 0x00000000 | 0xef;
+    *((pmap::BOOT_PAGE_TABLE + 8) as *mut u64) = 0x20000000 | 0xef;
+    *((pmap::BOOT_PAGE_TABLE + 16) as *mut u64) = 0x20000000 | 0xef;
+    *((pmap::BOOT_PAGE_TABLE + 24) as *mut u64) = 0x30000000 | 0xef;
     csrw!(satp, 8 << 60 | (pmap::BOOT_PAGE_TABLE >> 12) as usize);
 
     asm!("mv a1, $0
@@ -64,7 +66,7 @@ unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
 }
 
 fn sstart(_hartid: usize, device_tree_blob: usize) {
-   csrw!(stvec, crate::trap::strap_entry as *const () as usize + 0x7f80000000);
+   csrw!(stvec, crate::trap::strap_entry as *const () as usize + pmap::HVA_TO_XVA as usize);
    csrw!(sie, 0x888);
    println!("Hello World!");
 
@@ -76,17 +78,20 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
         let machine = fdt.process();
         // header.print();
 
+        println!("FDT loaded");
         pmap::init(&machine);
         println!("Memory initialized");
 
         if let (Some(start), Some(_end)) = (machine.initrd_start, machine.initrd_end) {
             println!("Loading guest kernel... {:#x}-{:#x}", start, _end);
-            let entry = elf::load_elf(start as *const u8, (machine.hpm_offset + machine.guest_shift) as *mut u8);
-            println!("Booting guest kernel...");
+            let entry = elf::load_elf((start + pmap::HPA_OFFSET) as *const u8,
+                                      (machine.hpm_offset + machine.guest_shift + pmap::HPA_OFFSET) as *mut u8);
             csrw!(sepc, ((entry as usize) + 3) & !3);
         } else {
+            // TODO: proper length
             let entry = u_entry as *const ();
-            csrw!(sepc, ((entry as usize) + 3) & !3);
+            core::ptr::copy(entry, (pmap::MPA_OFFSET + 0x80000000) as *mut (), 0x10000);
+            csrw!(sepc, 0x80000000);
         }
 
         println!("Jumping to high addresses...");
@@ -94,14 +99,15 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
               add t1, t0, $0
               jr t1
               nop
-              nop" :: "r"(pmap::HYPERVISOR_HOLE + 10) : "t0", "t1" : "volatile");
+              nop" :: "r"(pmap::HVA_TO_XVA + 10) : "t0", "t1" : "volatile");
 
-//        println!("Changing page table...");
-//        csrw!(satp, 8 << 60 | pmap::MPA_ROOT as usize >> 12);
+        println!("Booting guest...");
 
-        asm!("mv a1, $0
+        csrw!(satp, 8 << 60 | (pmap::MPA_ROOT >> 12) as usize);
+
+        asm!("mv a1, zero // $0
               li ra, 0
-              // li sp, 0
+              li sp, 0
               li gp, 0
               li tp, 0
               li t0, 0
@@ -132,12 +138,17 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
               li t6, 0
               sret" :: "r"(device_tree_blob) :: "volatile");
     }
+
     unreachable!();
 }
 
+#[naked]
 fn u_entry() {
-    println!("000");
+    loop {}
+    unsafe { asm!("li sp, 0x80100000" :::: "volatile"); }
     csrw!(sscratch, 0xdeafbeef);
+
+    println!("000");
     // println!("..");
     unsafe {
 //        asm!("ecall" :::: "volatile");

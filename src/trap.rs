@@ -328,6 +328,9 @@ static SHADOW_STATE: Mutex<ShadowState> = Mutex::new(ShadowState::new());
 
 #[no_mangle]
 pub unsafe fn strap() -> u64 {
+    // TODO: execute this earlier
+    csrw!(satp, 9 << 60 | (pmap::ROOT >> 12) as usize);
+
     println!("Trap!");
     let cause = csrr!(scause);
     let status = csrr!(sstatus);

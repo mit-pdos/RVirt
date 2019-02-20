@@ -45,7 +45,8 @@ pub const KVA_OFFSET: u64 = KVA_INDEX << 39;
 pub const MVA_OFFSET: u64 = MVA_INDEX << 39;
 pub const MPA_OFFSET: u64 = MPA_INDEX << 39;
 
-pub const HYPERVISOR_HOLE: u64 = 0x7f80000000;
+pub const HYPERVISOR_HOLE: u64 = 0xffffffff_c0000000;
+pub const HVA_TO_XVA: u64 = HYPERVISOR_HOLE - 0x40000000;
 
 /// Host physical address
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -165,6 +166,7 @@ pub fn init(machine: &MachineMeta) {
 
         // Map hypervisor into all address spaces at same location.
         // TODO: Make sure this address in compatible with Linux.
+        *((ROOT + 0xff8) as *mut u64) = (HVA_ROOT >> 2) | PTE_VALID;
         *((HVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
         *((UVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
         *((KVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
