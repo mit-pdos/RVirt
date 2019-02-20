@@ -327,7 +327,7 @@ impl ShadowState {
 static SHADOW_STATE: Mutex<ShadowState> = Mutex::new(ShadowState::new());
 
 #[no_mangle]
-pub unsafe fn strap() {
+pub unsafe fn strap() -> u64 {
     println!("Trap!");
     let cause = csrr!(scause);
     let status = csrr!(sstatus);
@@ -413,6 +413,8 @@ pub unsafe fn strap() {
     } else {
         forward_exception(&mut state, cause, csrr!(sepc));
     }
+
+    8 << 60 | pmap::MPA_ROOT >> 12
 }
 
 fn forward_interrupt(state: &mut ShadowState, cause: usize, sepc: usize) {

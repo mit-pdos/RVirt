@@ -19,17 +19,33 @@ const PTE_DIRTY: u64 = 0x80;
 const PTE_RSV_MASK: u64 = 0x300;
 
 const PTE_AD: u64 = PTE_ACCESSED | PTE_DIRTY;
-const PTE_RWX: u64 = PTE_READ | PTE_WRITE | PTE_EXECUTE;
+const PTE_RWXV: u64 = PTE_READ | PTE_WRITE | PTE_EXECUTE | PTE_VALID;
 
 const GUEST_PPN_OFFSET: u64 = fdt::VM_RESERVATION_SIZE as u64 / PAGE_SIZE;
 
 pub const ROOT: u64 = 0x80010000;
 pub const HVA_ROOT: u64 = 0x80011000;
-pub const HGA_ROOT: u64 = 0x80012000;
-pub const GPA_ROOT: u64 = 0x80013000;
-pub const UVA_ROOT: u64 = 0x80014000;
-pub const KVA_ROOT: u64 = 0x80015000;
-pub const MVA_ROOT: u64 = 0x80016000;
+pub const UVA_ROOT: u64 = 0x80012000;
+pub const KVA_ROOT: u64 = 0x80013000;
+pub const MVA_ROOT: u64 = 0x80014000;
+pub const MPA_ROOT: u64 = 0x80015000;
+pub const BOOT_PAGE_TABLE: u64 = 0x80016000;
+
+pub const HVA_INDEX: u64 = 0;
+pub const HPA_INDEX: u64 = 1;
+pub const UVA_INDEX: u64 = 2;
+pub const KVA_INDEX: u64 = 3;
+pub const MVA_INDEX: u64 = 4;
+pub const MPA_INDEX: u64 = 5;
+
+pub const HVA_OFFSET: u64 = HVA_INDEX << 39;
+pub const HPA_OFFSET: u64 = HPA_INDEX << 39;
+pub const UVA_OFFSET: u64 = UVA_INDEX << 39;
+pub const KVA_OFFSET: u64 = KVA_INDEX << 39;
+pub const MVA_OFFSET: u64 = MVA_INDEX << 39;
+pub const MPA_OFFSET: u64 = MPA_INDEX << 39;
+
+pub const HYPERVISOR_HOLE: u64 = 0x7f80000000;
 
 /// Host physical address
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -51,6 +67,8 @@ impl Vaddr {
     fn to_pointer_mut<T>(self) -> *mut T { self.0 as usize as *mut T }
 }
 
+fn pa2va(pa: u64) -> u64 { pa + HPA_OFFSET }
+
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 struct PageTableEntry(u64);
@@ -60,69 +78,6 @@ struct PageTable([PageTableEntry; 512]);
 
 #[repr(transparent)]
 struct Page([u8; PAGE_SIZE as usize]);
-
-pub struct PageTableDescriptor {
-    root: PageTable,
-    asid: u16,
-}
-impl PageTableDescriptor {
-    pub const fn new(asid: u16) -> Self {
-        Self {
-            root: PageTable([PageTableEntry(0); 512]),
-            asid,
-        }
-    }
-
-    pub fn pte_for_addr(&mut self, addr: Vaddr) -> *mut PageTableEntry {
-        let mut page_table = &mut self.root;
-        unsafe {
-            for level in 0..3 {
-                let pte_index = ((addr.0 >> (39 - PAGE_TABLE_SHIFT * level)) & 0x1ff) as usize;
-                let pte = page_table.0[pte_index].0;
-
-                if pte & PTE_VALID != 0 {
-                    assert_eq!(pte & PTE_RWX, 0);
-                    page_table = &mut *(Paddr(pte >> 12).to_virtual().to_pointer_mut());
-                } else {
-                    let page = alloc_page();
-                    page_table.0[pte_index].0 = (page as u64) | PTE_VALID;
-                    page_table = &mut *(page as *mut PageTable);
-                }
-            }
-
-        }
-
-        &page_table.0[((addr.0 >> 12) & 0x1ff) as usize] as *const PageTableEntry as *mut _
-    }
-
-    pub unsafe fn map_region(&mut self, Vaddr(va): Vaddr, Paddr(pa): Paddr, len: u64, perm: u64) {
-        assert_eq!(len % PAGE_SIZE, 0);
-        assert_eq!(va % PAGE_SIZE, 0);
-        assert_eq!(pa % PAGE_SIZE, 0);
-
-        let npages = len / PAGE_SIZE;
-        for p in 0..npages  {
-            let pte = self.pte_for_addr(Vaddr(va + p * PAGE_SIZE));
-            (*pte).0 = (pa + p * PAGE_SIZE) | perm | PTE_VALID;
-        }
-    }
-}
-
-const fn make_identity_page_table() -> PageTable {
-    let mut t = [PageTableEntry(0); 512];
-    t[0] = PageTableEntry(0xcf);
-    PageTable(t)
-}
-static IDENTITY_PAGE_TABLE: PageTable = make_identity_page_table();
-
-static USER_PAGE_TABLE: PageTableDescriptor = PageTableDescriptor::new(0);
-static KERNEL_PAGE_TABLE: PageTableDescriptor = PageTableDescriptor::new(1);
-static MIXED_PAGE_TABLE: PageTableDescriptor = PageTableDescriptor::new(2);
-static PHYSICAL_PAGE_TABLE: PageTableDescriptor = PageTableDescriptor::new(3);
-
-// struct SyncPtr<T>(*mut T);
-// unsafe impl<T> Send for SyncPtr<T> {}
-// unsafe impl<T> Sync for SyncPtr<T> {}
 
 #[repr(align(4096))]
 struct FreePage(Option<&'static FreePage>);
@@ -142,12 +97,82 @@ fn free_page(page: *mut Page) {
     *free_list = Some(free_page)
 }
 
+unsafe fn pte_for_addr(addr: u64) -> *mut PageTableEntry {
+    // These ranges use huge pages...
+    assert!(addr >> 39 != HVA_INDEX);
+
+    let mut page_table = &mut *(ROOT as *mut PageTable);
+    for level in 0..3 {
+        let pte_index = ((addr >> (39 - PAGE_TABLE_SHIFT * level)) & 0x1ff) as usize;
+        let pte = page_table.0[pte_index].0;
+
+        if pte & PTE_VALID != 0 {
+            assert_eq!(pte & (PTE_READ | PTE_WRITE | PTE_EXECUTE), 0);
+            page_table = &mut *(((pte >> 10) << 12) as *mut PageTable);
+        } else {
+            let page = alloc_page();
+            page_table.0[pte_index].0 = ((page as u64) >> 2) | PTE_VALID;
+            page_table = &mut *(page as *mut PageTable);
+        }
+    }
+    &page_table.0[((addr >> 12) & 0x1ff) as usize] as *const PageTableEntry as *mut _
+}
+
+pub unsafe fn map_region(va: u64, pa: u64, len: u64, perm: u64) {
+    assert_eq!(len % PAGE_SIZE, 0);
+    assert_eq!(va % PAGE_SIZE, 0);
+    assert_eq!(pa % PAGE_SIZE, 0);
+
+    let npages = len / PAGE_SIZE;
+    for p in 0..npages  {
+        let pte = pte_for_addr(va + p * PAGE_SIZE);
+        (*pte).0 = (pa + p * PAGE_SIZE) | perm | PTE_VALID;
+    }
+}
+
 pub fn init(machine: &MachineMeta) {
+    let mut i = 0;
     let mut addr = MAX_TSTACK_ADDR;
     while addr < machine.hpm_offset as usize + fdt::VM_RESERVATION_SIZE {
         free_page(addr as *mut Page);
         addr += PAGE_SIZE as usize;
+        i += 1;
     }
+
+    unsafe {
+        // Zero out page tables
+        ptr::write_bytes(ROOT as *mut u8, 0, (BOOT_PAGE_TABLE - ROOT) as usize);
+
+        // Root page table
+        *((ROOT + 0x00) as *mut u64) = (HVA_ROOT >> 2) | PTE_VALID;
+        *((ROOT + 0x08) as *mut u64) = PTE_AD | PTE_RWXV;
+        *((ROOT + 0x10) as *mut u64) = (UVA_ROOT >> 2) | PTE_VALID;
+        *((ROOT + 0x18) as *mut u64) = (KVA_ROOT >> 2) | PTE_VALID;
+        *((ROOT + 0x20) as *mut u64) = (MVA_ROOT >> 2) | PTE_VALID;
+        *((ROOT + 0x28) as *mut u64) = (MPA_ROOT >> 2) | PTE_VALID;
+
+        *((HVA_ROOT + 0x00) as *mut u64) = 0x00000000 | PTE_AD | PTE_USER | PTE_RWXV;
+        *((HVA_ROOT + 0x08) as *mut u64) = 0x20000000 | PTE_AD | PTE_USER | PTE_RWXV;
+        *((HVA_ROOT + 0x10) as *mut u64) = 0x20000000 | PTE_AD | PTE_USER | PTE_RWXV;
+        *((HVA_ROOT + 0x18) as *mut u64) = 0x30000000 | PTE_AD | PTE_RWXV;
+
+        *((MPA_ROOT + 0x00) as *mut u64) = 0x00000000 | PTE_AD | PTE_USER | PTE_RWXV;
+        *((MPA_ROOT + 0x08) as *mut u64) = 0x10000000 | PTE_AD | PTE_USER | PTE_RWXV;
+        map_region(MPA_OFFSET + 0x80000000,
+                   machine.guest_shift + 0x80000000,
+                   machine.gpm_size,
+                   PTE_AD | PTE_RWXV);
+
+        // Map hypervisor into all address spaces at same location.
+        // TODO: Make sure this address in compatible with Linux.
+        *((HVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
+        *((UVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
+        *((KVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
+        *((MVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
+        *((MPA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
+    }
+
+    csrw!(satp, 9 << 60 | (ROOT >> 12) as usize);
 }
 
 pub fn handle_sfence_vma(state: &mut ShadowState, instruction: Instruction) {

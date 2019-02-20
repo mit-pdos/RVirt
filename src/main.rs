@@ -53,19 +53,18 @@ unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
     csrw!(mepc, sstart as usize);
 
     // Minimal page table to boot into S mode.
-    *(pmap::ROOT as *mut u64) = (pmap::HVA_ROOT >> 2) | 0x01;
-    *((pmap::HVA_ROOT + 0) as *mut u64) = 0x00000000 | 0xdf;
-    *((pmap::HVA_ROOT + 8) as *mut u64) = 0x20000000 | 0xdf;
-    *((pmap::HVA_ROOT + 16) as *mut u64) = 0x20000000 | 0xdf;
-    *((pmap::HVA_ROOT + 24) as *mut u64) = 0x30000000 | 0xdf;
-    csrw!(satp, 9 << 60 | (pmap::ROOT >> 12) as usize);
+    *((pmap::BOOT_PAGE_TABLE + 0) as *mut u64) = 0x00000000 | 0xdf;
+    *((pmap::BOOT_PAGE_TABLE + 8) as *mut u64) = 0x20000000 | 0xdf;
+    *((pmap::BOOT_PAGE_TABLE + 16) as *mut u64) = 0x20000000 | 0xdf;
+    *((pmap::BOOT_PAGE_TABLE + 24) as *mut u64) = 0x30000000 | 0xdf;
+    csrw!(satp, 8 << 60 | (pmap::BOOT_PAGE_TABLE >> 12) as usize);
 
     asm!("mv a1, $0
           mret" :: "r"(device_tree_blob) :: "volatile");
 }
 
 fn sstart(_hartid: usize, device_tree_blob: usize) {
-   csrw!(stvec, crate::trap::strap_entry as *const () as usize);
+   csrw!(stvec, crate::trap::strap_entry as *const () as usize + 0x7f80000000);
    csrw!(sie, 0x888);
    println!("Hello World!");
 
@@ -78,16 +77,28 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
         // header.print();
 
         pmap::init(&machine);
+        println!("Memory initialized");
+
         if let (Some(start), Some(_end)) = (machine.initrd_start, machine.initrd_end) {
             println!("Loading guest kernel... {:#x}-{:#x}", start, _end);
             let entry = elf::load_elf(start as *const u8, (machine.hpm_offset + machine.guest_shift) as *mut u8);
             println!("Booting guest kernel...");
             csrw!(sepc, ((entry as usize) + 3) & !3);
         } else {
-            csrw!(sepc, ((u_entry as *const () as usize) + 3) & !3);
+            let entry = u_entry as *const ();
+            csrw!(sepc, ((entry as usize) + 3) & !3);
         }
 
-        println!("Jumping into guest...");
+        println!("Jumping to high addresses...");
+        asm!("auipc t0, 0
+              add t1, t0, $0
+              jr t1
+              nop
+              nop" :: "r"(pmap::HYPERVISOR_HOLE + 10) : "t0", "t1" : "volatile");
+
+//        println!("Changing page table...");
+//        csrw!(satp, 8 << 60 | pmap::MPA_ROOT as usize >> 12);
+
         asm!("mv a1, $0
               li ra, 0
               // li sp, 0
