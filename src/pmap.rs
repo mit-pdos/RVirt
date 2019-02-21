@@ -60,25 +60,6 @@ mod page_table_constants {
 }
 pub use page_table_constants::*;
 
-/// Host physical address
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-struct Paddr(u64);
-
-/// Guest physical address
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-struct Gaddr(u64);
-
-/// Guest virtual address
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-struct Vaddr(u64);
-
-#[repr(transparent)]
-#[derive(Copy, Clone)]
-struct PageTableEntry(u64);
-
-#[repr(align(4096))]
-struct PageTable([PageTableEntry; 512]);
-
 #[repr(transparent)]
 struct Page([u8; PAGE_SIZE as usize]);
 
@@ -100,25 +81,25 @@ fn free_page(page: *mut Page) {
     *free_list = Some(free_page)
 }
 
-unsafe fn pte_for_addr(addr: u64) -> *mut PageTableEntry {
+unsafe fn pte_for_addr(addr: u64) -> *mut u64 {
     // These ranges use huge pages...
     assert!(addr >> 39 != HVA_INDEX);
 
-    let mut page_table = &mut *(ROOT as *mut PageTable);
+    let mut page_table = ROOT as *mut u64;
     for level in 0..3 {
         let pte_index = ((addr >> (39 - PAGE_TABLE_SHIFT * level)) & 0x1ff) as usize;
-        let pte = page_table.0[pte_index].0;
+        let pte = *page_table.add(pte_index);
 
         if pte & PTE_VALID != 0 {
             assert_eq!(pte & (PTE_READ | PTE_WRITE | PTE_EXECUTE), 0);
-            page_table = &mut *(((pte >> 10) << 12) as *mut PageTable);
+            page_table = ((pte >> 10) << 12) as *mut u64;
         } else {
             let page = alloc_page();
-            page_table.0[pte_index].0 = ((page as u64) >> 2) | PTE_VALID;
-            page_table = &mut *(page as *mut PageTable);
+            *page_table.add(pte_index) = ((page as u64) >> 2) | PTE_VALID;
+            page_table = page as *mut u64;
         }
     }
-    &page_table.0[((addr >> 12) & 0x1ff) as usize] as *const PageTableEntry as *mut _
+    page_table.add((addr as usize >> 12) & 0x1ff)
 }
 
 pub unsafe fn map_region(va: u64, pa: u64, len: u64, perm: u64) {
@@ -129,7 +110,7 @@ pub unsafe fn map_region(va: u64, pa: u64, len: u64, perm: u64) {
     let npages = len / PAGE_SIZE;
     for p in 0..npages  {
         let pte = pte_for_addr(va + p * PAGE_SIZE);
-        (*pte).0 = ((pa + p * PAGE_SIZE) >> 2) | perm;
+        *pte = ((pa + p * PAGE_SIZE) >> 2) | perm;
     }
 }
 
