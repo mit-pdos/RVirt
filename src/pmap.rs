@@ -1,6 +1,6 @@
 use crate::fdt::{self, MachineMeta};
 use crate::trap::{ShadowState, MAX_TSTACK_ADDR};
-use core::{mem, ptr};
+use core::ptr;
 use riscv_decode::Instruction;
 use spin::Mutex;
 
@@ -8,53 +8,61 @@ const PAGE_SIZE: u64 = 4096;
 
 const PAGE_TABLE_SHIFT: u32 = 9;
 
-const PTE_VALID: u64 = 0x1;
-const PTE_READ: u64 = 0x2;
-const PTE_WRITE: u64 = 0x4;
-const PTE_EXECUTE: u64 = 0x8;
-const PTE_USER: u64 = 0x10;
-const PTE_GLOBAL: u64 = 0x20;
-const PTE_ACCESSED: u64 = 0x40;
-const PTE_DIRTY: u64 = 0x80;
-const PTE_RSV_MASK: u64 = 0x300;
+#[allow(unused)]
+mod pte_flags {
+    pub const PTE_VALID: u64 = 0x1;
+    pub const PTE_READ: u64 = 0x2;
+    pub const PTE_WRITE: u64 = 0x4;
+    pub const PTE_EXECUTE: u64 = 0x8;
+    pub const PTE_USER: u64 = 0x10;
+    pub const PTE_GLOBAL: u64 = 0x20;
+    pub const PTE_ACCESSED: u64 = 0x40;
+    pub const PTE_DIRTY: u64 = 0x80;
+    pub const PTE_RSV_MASK: u64 = 0x300;
 
-const PTE_AD: u64 = PTE_ACCESSED | PTE_DIRTY;
-const PTE_RWXV: u64 = PTE_READ | PTE_WRITE | PTE_EXECUTE | PTE_VALID;
+    pub const PTE_AD: u64 = PTE_ACCESSED | PTE_DIRTY;
+    pub const PTE_RWXV: u64 = PTE_READ | PTE_WRITE | PTE_EXECUTE | PTE_VALID;
+}
+use pte_flags::*;
 
-const GUEST_PPN_OFFSET: u64 = fdt::VM_RESERVATION_SIZE as u64 / PAGE_SIZE;
+#[allow(unused)]
+mod page_table_constants {
+    pub const ROOT: u64 = 0x80010000;
+    pub const HVA_ROOT: u64 = 0x80011000; // (Host) Hypervisor virtual addresses
+    pub const UVA_ROOT: u64 = 0x80012000; // (Guest) User virtual addresses
+    pub const KVA_ROOT: u64 = 0x80013000; // (Guest) Kernel virtual addresses
+    pub const MVA_ROOT: u64 = 0x80014000; // (Guest) Mixed virtual addresses, for SSTATUS.SUM=1
+    pub const MPA_ROOT: u64 = 0x80015000; // (Guest) Mixed physical addresses, for SATP.MODE=0
+    pub const BOOT_PAGE_TABLE: u64 = 0x80016000;
 
-pub const ROOT: u64 = 0x80010000;
-pub const HVA_ROOT: u64 = 0x80011000;
-pub const UVA_ROOT: u64 = 0x80012000;
-pub const KVA_ROOT: u64 = 0x80013000;
-pub const MVA_ROOT: u64 = 0x80014000;
-pub const MPA_ROOT: u64 = 0x80015000;
-pub const BOOT_PAGE_TABLE: u64 = 0x80016000;
+    pub const HVA_INDEX: u64 = 0;
+    pub const HPA_INDEX: u64 = 1;
+    pub const UVA_INDEX: u64 = 2;
+    pub const KVA_INDEX: u64 = 3;
+    pub const MVA_INDEX: u64 = 4;
+    pub const MPA_INDEX: u64 = 5;
 
-pub const HVA_INDEX: u64 = 0;
-pub const HPA_INDEX: u64 = 1;
-pub const UVA_INDEX: u64 = 2;
-pub const KVA_INDEX: u64 = 3;
-pub const MVA_INDEX: u64 = 4;
-pub const MPA_INDEX: u64 = 5;
+    pub const HVA_OFFSET: u64 = HVA_INDEX << 39;
+    pub const HPA_OFFSET: u64 = HPA_INDEX << 39;
+    pub const UVA_OFFSET: u64 = UVA_INDEX << 39;
+    pub const KVA_OFFSET: u64 = KVA_INDEX << 39;
+    pub const MVA_OFFSET: u64 = MVA_INDEX << 39;
+    pub const MPA_OFFSET: u64 = MPA_INDEX << 39;
 
-pub const HVA_OFFSET: u64 = HVA_INDEX << 39;
-pub const HPA_OFFSET: u64 = HPA_INDEX << 39;
-pub const UVA_OFFSET: u64 = UVA_INDEX << 39;
-pub const KVA_OFFSET: u64 = KVA_INDEX << 39;
-pub const MVA_OFFSET: u64 = MVA_INDEX << 39;
-pub const MPA_OFFSET: u64 = MPA_INDEX << 39;
+    pub const HYPERVISOR_HOLE: u64 = 0xffffffff_c0000000;
+    pub const HVA_TO_XVA: u64 = HYPERVISOR_HOLE - 0x40000000;
 
-pub const HYPERVISOR_HOLE: u64 = 0xffffffff_c0000000;
-pub const HVA_TO_XVA: u64 = HYPERVISOR_HOLE - 0x40000000;
+    pub const ROOT_SATP: usize = 9 << 60 | (ROOT >> 12) as usize;
+    pub const UVA_SATP: usize = (8 << 60 | (UVA_INDEX << 44) | (UVA_ROOT >> 12)) as usize;
+    pub const KVA_SATP: usize = (8 << 60 | (KVA_INDEX << 44) | (KVA_ROOT >> 12)) as usize;
+    pub const MVA_SATP: usize = (8 << 60 | (MVA_INDEX << 44) | (MVA_ROOT >> 12)) as usize;
+    pub const MPA_SATP: usize = (8 << 60 | (MPA_INDEX << 44) | (MPA_ROOT >> 12)) as usize;
+}
+pub use page_table_constants::*;
 
 /// Host physical address
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 struct Paddr(u64);
-impl Paddr {
-    // TODO: Fix this mapping
-    fn to_virtual(self) -> Vaddr { Vaddr(self.0) }
-}
 
 /// Guest physical address
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -63,12 +71,6 @@ struct Gaddr(u64);
 /// Guest virtual address
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 struct Vaddr(u64);
-impl Vaddr {
-    fn to_pointer<T>(self) -> *const T { self.0 as usize as *const T }
-    fn to_pointer_mut<T>(self) -> *mut T { self.0 as usize as *mut T }
-}
-
-fn pa2va(pa: u64) -> u64 { pa + HPA_OFFSET }
 
 #[repr(transparent)]
 #[derive(Copy, Clone)]
@@ -127,17 +129,15 @@ pub unsafe fn map_region(va: u64, pa: u64, len: u64, perm: u64) {
     let npages = len / PAGE_SIZE;
     for p in 0..npages  {
         let pte = pte_for_addr(va + p * PAGE_SIZE);
-        (*pte).0 = (pa + p * PAGE_SIZE) | perm | PTE_VALID;
+        (*pte).0 = ((pa + p * PAGE_SIZE) >> 2) | perm;
     }
 }
 
 pub fn init(machine: &MachineMeta) {
-    let mut i = 0;
     let mut addr = MAX_TSTACK_ADDR;
     while addr < machine.hpm_offset as usize + fdt::VM_RESERVATION_SIZE {
         free_page(addr as *mut Page);
         addr += PAGE_SIZE as usize;
-        i += 1;
     }
 
     unsafe {
@@ -162,7 +162,7 @@ pub fn init(machine: &MachineMeta) {
         map_region(MPA_OFFSET + 0x80000000,
                    machine.guest_shift + 0x80000000,
                    machine.gpm_size,
-                   PTE_AD | PTE_RWXV);
+                   PTE_AD | PTE_USER | PTE_RWXV);
 
         // Map hypervisor into all address spaces at same location.
         // TODO: Make sure this address in compatible with Linux.
@@ -174,10 +174,32 @@ pub fn init(machine: &MachineMeta) {
         *((MPA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
     }
 
-    csrw!(satp, 9 << 60 | (ROOT >> 12) as usize);
+    csrw!(satp, ROOT_SATP);
+    unsafe { asm!("sfence.vma" :::: "volatile"); }
+
     csrs!(sstatus, crate::trap::constants::STATUS_SUM);
 }
 
-pub fn handle_sfence_vma(state: &mut ShadowState, instruction: Instruction) {
-    unimplemented!()
+#[allow(unused)]
+pub fn print_page_table(pt: u64, level: u8) {
+    unsafe {
+        for i in 0..512 {
+            let pte = *((pt + i*8) as *const u64);
+            if pte & PTE_VALID != 0 {
+                for _ in 0..(4 - level) {
+                    print!("  ");
+                }
+                println!("{:#x}: {:#x}", i *8, pte);
+            }
+            if pte & PTE_RWXV == PTE_VALID {
+                assert!(level != 0);
+                print_page_table((pte >> 10) << 12, level - 1);
+            }
+        }
+
+    }
+}
+
+pub fn handle_sfence_vma(_state: &mut ShadowState, _instruction: Instruction) {
+    unimplemented!("sfence.vma")
 }

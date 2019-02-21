@@ -60,8 +60,9 @@ unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
     *((pmap::BOOT_PAGE_TABLE + 24) as *mut u64) = 0x30000000 | 0xcf;
     csrw!(satp, 8 << 60 | (pmap::BOOT_PAGE_TABLE >> 12) as usize);
 
-    asm!("mv a1, $0
-          mret" :: "r"(device_tree_blob) :: "volatile");
+    asm!("mv a0, $1
+          mv a1, $0
+          mret" :: "r"(device_tree_blob), "r"(hartid) :: "volatile");
 }
 
 fn sstart(_hartid: usize, device_tree_blob: usize) {
@@ -81,30 +82,30 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
         pmap::init(&machine);
         println!("Memory initialized");
 
+        // pmap::print_page_table(pmap::MPA_ROOT, 3);
+
         if let (Some(start), Some(_end)) = (machine.initrd_start, machine.initrd_end) {
             println!("Loading guest kernel... {:#x}-{:#x}", start, _end);
             let entry = elf::load_elf((start + pmap::HPA_OFFSET) as *const u8,
                                       (machine.hpm_offset + machine.guest_shift + pmap::HPA_OFFSET) as *mut u8);
             csrw!(sepc, ((entry as usize) + 3) & !3);
+
         } else {
             // TODO: proper length
-            let entry = u_entry as *const ();
-            core::ptr::copy(entry, (pmap::MPA_OFFSET + 0x80000000) as *mut (), 0x10000);
+            core::ptr::copy(u_entry as *const u8, (pmap::MPA_OFFSET + 0x80000000) as *mut u8, 0x10000);
             csrw!(sepc, 0x80000000);
         }
 
-        println!("Jumping to high addresses...");
         asm!("auipc t0, 0
               add t1, t0, $0
-              jr t1
-              nop
-              nop" :: "r"(pmap::HVA_TO_XVA + 10) : "t0", "t1" : "volatile");
+              jr t1" :: "r"(pmap::HVA_TO_XVA + 10) : "t0", "t1" : "volatile");
 
         println!("Booting guest...");
 
-        csrw!(satp, 8 << 60 | (pmap::MPA_ROOT >> 12) as usize);
+        csrw!(satp, pmap::MPA_SATP);
+        asm!("sfence.vma" :::: "volatile");
 
-        asm!("mv a1, zero // $0
+        asm!("mv a1, $0
               li ra, 0
               li sp, 0
               li gp, 0
@@ -143,19 +144,18 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
 
 #[naked]
 fn u_entry() {
-    loop {}
     unsafe { asm!("li sp, 0x80100000" :::: "volatile"); }
     csrw!(sscratch, 0xdeafbeef);
 
-    println!("000");
+    // println!("000");
     // println!("..");
-    unsafe {
+//    unsafe {
 //        asm!("ecall" :::: "volatile");
         // asm!("ecall" :::: "volatile");
         // asm!("ecall" :::: "volatile");
-    }
-    println!("111");
+//    }
+    // println!("111");
     csrw!(sscratch, 0xdeafbeef);
-    println!("222");
+    // println!("222");
     loop {}
 }

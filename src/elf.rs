@@ -89,5 +89,6 @@ pub unsafe fn load_elf(data: *const u8, base_address: *mut u8) -> *const u8 {
         }
     }
 
-    base_address.add(elf.entry as usize)
+    //    base_address.add(elf.entry as usize)
+    0x80000000 as *const u8
 }
