@@ -266,8 +266,6 @@ pub struct ShadowState {
 
     // Whether the guest is in S-Mode.
     smode: bool,
-    // Root of the currently installed shadow page table.
-    shadow_pt: u64,
 }
 impl ShadowState {
     pub const fn new() -> Self {
@@ -282,7 +280,6 @@ impl ShadowState {
             satp: 0,
 
             smode: true,
-            shadow_pt: pmap::MPA_SATP as u64,
         }
     }
     pub fn push_sie(&mut self) {
@@ -357,12 +354,24 @@ impl ShadowState {
 
         return true;
     }
+
+    pub fn shadow_satp(&self) -> usize {
+        if (self.satp & SATP_MODE) == 0 {
+            pmap::MPA_SATP
+        } else if !self.smode {
+            pmap::UVA_SATP
+        } else if self.sstatus & STATUS_SUM == 0 {
+            pmap::KVA_SATP
+        } else {
+            pmap::MVA_SATP
+        }
+    }
 }
 
 static SHADOW_STATE: Mutex<ShadowState> = Mutex::new(ShadowState::new());
 
 #[no_mangle]
-pub unsafe fn strap() -> u64 {
+pub unsafe fn strap() -> usize {
     let cause = csrr!(scause);
     let status = csrr!(sstatus);
 
@@ -448,12 +457,13 @@ pub unsafe fn strap() -> u64 {
         //   ecall
         //   sw a7, 17*4($0)"
         //      :: "r"(SSTACK_BASE) : "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7": "volatile");
-        csrw!(sepc, csrr!(sepc) + 4);
+
+        // csrw!(sepc, csrr!(sepc) + 4);
     } else {
         forward_exception(&mut state, cause, csrr!(sepc));
     }
 
-    state.shadow_pt
+    state.shadow_satp()
 }
 
 fn forward_interrupt(state: &mut ShadowState, cause: usize, sepc: usize) {
