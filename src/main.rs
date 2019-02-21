@@ -92,7 +92,8 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
 
         } else {
             // TODO: proper length
-            core::ptr::copy(u_entry as *const u8, (pmap::MPA_OFFSET + 0x80000000) as *mut u8, 0x10000);
+            core::ptr::copy(u_entry as *const u8, pmap::MPA.address_to_pointer(0x80000000), 0x10000);
+            println!("entry: {:#x}", *pmap::MPA.address_to_pointer::<u64>(0x80000000));
             csrw!(sepc, 0x80000000);
         }
 
@@ -100,9 +101,10 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
               add t1, t0, $0
               jr t1" :: "r"(pmap::HVA_TO_XVA + 10) : "t0", "t1" : "volatile");
 
-        println!("Booting guest...");
+        const MPA_SATP: usize = pmap::MPA.satp() as usize;
+        println!("Booting guest... satp={:#x}", MPA_SATP);
 
-        csrw!(satp, pmap::MPA_SATP);
+        csrw!(satp, MPA_SATP);
         asm!("sfence.vma" :::: "volatile");
 
         asm!("mv a1, $0

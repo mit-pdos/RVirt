@@ -156,6 +156,7 @@ pub unsafe fn mtrap() {
 #[no_mangle]
 #[link_section = ".text.strap_entry"]
 pub unsafe fn strap_entry() -> ! {
+    const ROOT_SATP: u64 = pmap::ROOT.satp();
     asm!(".align 4
           // Save stack pointer in sscratch
           csrw 0x140, sp
@@ -243,7 +244,7 @@ pub unsafe fn strap_entry() -> ! {
 
           // Restore stack pointer and return
           csrr sp, 0x140
-          sret" :: "i"(pmap::ROOT_SATP) :: "volatile");
+          sret" :: "i"(ROOT_SATP) :: "volatile");
 
     unreachable!()
 }
@@ -355,15 +356,15 @@ impl ShadowState {
         return true;
     }
 
-    pub fn shadow_satp(&self) -> usize {
+    pub fn shadow(&self) -> pmap::PageTableRoot {
         if (self.satp & SATP_MODE) == 0 {
-            pmap::MPA_SATP
+            pmap::MPA
         } else if !self.smode {
-            pmap::UVA_SATP
+            pmap::UVA
         } else if self.sstatus & STATUS_SUM == 0 {
-            pmap::KVA_SATP
+            pmap::KVA
         } else {
-            pmap::MVA_SATP
+            pmap::MVA
         }
     }
 }
@@ -371,7 +372,7 @@ impl ShadowState {
 static SHADOW_STATE: Mutex<ShadowState> = Mutex::new(ShadowState::new());
 
 #[no_mangle]
-pub unsafe fn strap() -> usize {
+pub unsafe fn strap() -> u64 {
     let cause = csrr!(scause);
     let status = csrr!(sstatus);
 
@@ -396,11 +397,13 @@ pub unsafe fn strap() -> usize {
         loop {}
     } else if cause == 2 && state.smode {
         let pc = csrr!(sepc);
-        let il = *((pc + pmap::MPA_OFFSET as usize) as *const u16);
+        let pc_ptr = state.shadow().address_to_pointer(pc as u64);
+
+        let il: u16 = *pc_ptr;
         let len = riscv_decode::instruction_length(il);
         let instruction = match len {
             2 => il as u32,
-            4 => il as u32 | ((*((pc + 2 + pmap::MPA_OFFSET as usize) as *const u16) as u32) << 16),
+            4 => il as u32 | ((*pc_ptr.offset(1) as u32) << 16),
             _ => unreachable!(),
         };
         let decoded = riscv_decode::try_decode(instruction);
@@ -463,7 +466,7 @@ pub unsafe fn strap() -> usize {
         forward_exception(&mut state, cause, csrr!(sepc));
     }
 
-    state.shadow_satp()
+    state.shadow().satp()
 }
 
 fn forward_interrupt(state: &mut ShadowState, cause: usize, sepc: usize) {

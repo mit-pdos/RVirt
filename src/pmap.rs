@@ -1,5 +1,6 @@
 use crate::fdt::{self, MachineMeta};
 use crate::trap::{ShadowState, MAX_TSTACK_ADDR};
+use core::ops::{Index, IndexMut};
 use core::ptr;
 use riscv_decode::Instruction;
 use spin::Mutex;
@@ -27,38 +28,112 @@ use pte_flags::*;
 
 #[allow(unused)]
 mod page_table_constants {
-    pub const ROOT: u64 = 0x80010000;
-    pub const HVA_ROOT: u64 = 0x80011000; // (Host) Hypervisor virtual addresses
-    pub const UVA_ROOT: u64 = 0x80012000; // (Guest) User virtual addresses
-    pub const KVA_ROOT: u64 = 0x80013000; // (Guest) Kernel virtual addresses
-    pub const MVA_ROOT: u64 = 0x80014000; // (Guest) Mixed virtual addresses, for SSTATUS.SUM=1
-    pub const MPA_ROOT: u64 = 0x80015000; // (Guest) Mixed physical addresses, for SATP.MODE=0
+    // pub const ROOT: u64 = 0x80010000;
+    // pub const HVA_ROOT: u64 = 0x80011000; 
+    // pub const UVA_ROOT: u64 = 0x80012000; 
+    // pub const KVA_ROOT: u64 = 0x80013000; // 
+    // pub const MVA_ROOT: u64 = 0x80014000; //
+    // pub const MPA_ROOT: u64 = 0x80015000; 
     pub const BOOT_PAGE_TABLE: u64 = 0x80016000;
 
-    pub const HVA_INDEX: u64 = 0;
+    // pub const HVA_INDEX: u64 = 0;
     pub const HPA_INDEX: u64 = 1;
-    pub const UVA_INDEX: u64 = 2;
-    pub const KVA_INDEX: u64 = 3;
-    pub const MVA_INDEX: u64 = 4;
-    pub const MPA_INDEX: u64 = 5;
+    // pub const UVA_INDEX: u64 = 2;
+    // pub const KVA_INDEX: u64 = 3;
+    // pub const MVA_INDEX: u64 = 4;
+    // pub const MPA_INDEX: u64 = 5;
 
-    pub const HVA_OFFSET: u64 = HVA_INDEX << 39;
+    // pub const HVA_OFFSET: u64 = HVA_INDEX << 39;
     pub const HPA_OFFSET: u64 = HPA_INDEX << 39;
-    pub const UVA_OFFSET: u64 = UVA_INDEX << 39;
-    pub const KVA_OFFSET: u64 = KVA_INDEX << 39;
-    pub const MVA_OFFSET: u64 = MVA_INDEX << 39;
-    pub const MPA_OFFSET: u64 = MPA_INDEX << 39;
+    // pub const UVA_OFFSET: u64 = UVA_INDEX << 39;
+    // pub const KVA_OFFSET: u64 = KVA_INDEX << 39;
+    // pub const MVA_OFFSET: u64 = MVA_INDEX << 39;
+    // pub const MPA_OFFSET: u64 = MPA_INDEX << 39;
 
     pub const HYPERVISOR_HOLE: u64 = 0xffffffff_c0000000;
     pub const HVA_TO_XVA: u64 = HYPERVISOR_HOLE - 0x40000000;
 
-    pub const ROOT_SATP: usize = 9 << 60 | (ROOT >> 12) as usize;
-    pub const UVA_SATP: usize = (8 << 60 | (UVA_INDEX << 44) | (UVA_ROOT >> 12)) as usize;
-    pub const KVA_SATP: usize = (8 << 60 | (KVA_INDEX << 44) | (KVA_ROOT >> 12)) as usize;
-    pub const MVA_SATP: usize = (8 << 60 | (MVA_INDEX << 44) | (MVA_ROOT >> 12)) as usize;
-    pub const MPA_SATP: usize = (8 << 60 | (MPA_INDEX << 44) | (MPA_ROOT >> 12)) as usize;
+    // pub const ROOT_SATP: usize = 9 << 60 | (ROOT >> 12) as usize;
+    // pub const UVA_SATP: usize = (8 << 60 | (UVA_INDEX << 44) | (UVA_ROOT >> 12)) as usize;
+    // pub const KVA_SATP: usize = (8 << 60 | (KVA_INDEX << 44) | (KVA_ROOT >> 12)) as usize;
+    // pub const MVA_SATP: usize = (8 << 60 | (MVA_INDEX << 44) | (MVA_ROOT >> 12)) as usize;
+    // pub const MPA_SATP: usize = (8 << 60 | (MPA_INDEX << 44) | (MPA_ROOT >> 12)) as usize;
 }
 pub use page_table_constants::*;
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum PageTableRoot {
+    ROOT = 0,
+    HVA = 1,
+    UVA = 2,
+    KVA = 3,
+    MVA = 4,
+    MPA = 5,
+}
+pub use PageTableRoot::*;
+
+impl PageTableRoot {
+    const fn index(&self) -> u64 {
+        const INDEXES: [u64; 6] = [0, 0, 2, 3, 4, 5];
+        INDEXES[*self as usize]
+    }
+
+    const fn offset(&self) -> u64 {
+        // assert!(*self != ROOT);
+        self.index() << 39
+    }
+
+    #[inline(always)]
+    pub const fn satp(&self) -> u64 {
+        const MODES: [u64; 6] = [9, 8, 8, 8, 8, 8];
+        let mode = MODES[*self as usize];
+        let asid = *self as u64;
+        let ppn = self.pa();
+
+        mode << 60 | (asid << 44) | (ppn >> 12)
+    }
+
+    const fn pa(&self) -> u64 {
+        const PHYSICAL_ADDRESSES: [u64; 6] = [
+            0x80010000,
+            0x80011000,
+            0x80012000,
+            0x80013000,
+            0x80014000,
+            0x80015000,
+        ];
+        PHYSICAL_ADDRESSES[*self as usize]
+    }
+
+    fn va(&self) -> u64 {
+        pa2va(self.pa())
+    }
+
+    pub fn address_to_pointer<T>(&self, addr: u64) -> *mut T {
+        (addr + self.offset()) as *mut T
+    }
+}
+
+impl Index<u64> for PageTableRoot {
+    type Output = u64;
+
+    fn index(&self, i: u64) -> &Self::Output {
+        assert!(i < 512);
+        unsafe {
+            &*((self.va() + i*8) as *const u64)
+        }
+    }
+}
+impl IndexMut<u64> for PageTableRoot {
+    fn index_mut(&mut self, i: u64) -> &mut Self::Output {
+        assert!(i < 512);
+        unsafe {
+            &mut *((self.va() + i*8) as *mut u64)
+        }
+    }
+}
+
+fn pa2va(pa: u64) -> u64 { pa + HPA_OFFSET }
 
 #[repr(transparent)]
 struct Page([u8; PAGE_SIZE as usize]);
@@ -83,16 +158,16 @@ fn free_page(page: *mut Page) {
 
 unsafe fn pte_for_addr(addr: u64) -> *mut u64 {
     // These ranges use huge pages...
-    assert!(addr >> 39 != HVA_INDEX);
+    assert!(addr >> 39 != HVA.index());
 
-    let mut page_table = ROOT as *mut u64;
+    let mut page_table = ROOT.va() as *mut u64;
     for level in 0..3 {
         let pte_index = ((addr >> (39 - PAGE_TABLE_SHIFT * level)) & 0x1ff) as usize;
         let pte = *page_table.add(pte_index);
 
         if pte & PTE_VALID != 0 {
             assert_eq!(pte & (PTE_READ | PTE_WRITE | PTE_EXECUTE), 0);
-            page_table = ((pte >> 10) << 12) as *mut u64;
+            page_table = pa2va((pte >> 10) << 12) as *mut u64;
         } else {
             let page = alloc_page();
             *page_table.add(pte_index) = ((page as u64) >> 2) | PTE_VALID;
@@ -123,40 +198,50 @@ pub fn init(machine: &MachineMeta) {
 
     unsafe {
         // Zero out page tables
-        ptr::write_bytes(ROOT as *mut u8, 0, (BOOT_PAGE_TABLE - ROOT) as usize);
+        ptr::write_bytes(ROOT.pa() as *mut u8, 0, PAGE_SIZE as usize);
+        ptr::write_bytes(HVA.pa() as *mut u8, 0, PAGE_SIZE as usize);
+        ptr::write_bytes(UVA.pa() as *mut u8, 0, PAGE_SIZE as usize);
+        ptr::write_bytes(KVA.pa() as *mut u8, 0, PAGE_SIZE as usize);
+        ptr::write_bytes(MVA.pa() as *mut u8, 0, PAGE_SIZE as usize);
+        ptr::write_bytes(MPA.pa() as *mut u8, 0, PAGE_SIZE as usize);
 
         // Root page table
-        *((ROOT + 0x00) as *mut u64) = (HVA_ROOT >> 2) | PTE_VALID;
-        *((ROOT + 0x08) as *mut u64) = PTE_AD | PTE_RWXV;
-        *((ROOT + 0x10) as *mut u64) = (UVA_ROOT >> 2) | PTE_VALID;
-        *((ROOT + 0x18) as *mut u64) = (KVA_ROOT >> 2) | PTE_VALID;
-        *((ROOT + 0x20) as *mut u64) = (MVA_ROOT >> 2) | PTE_VALID;
-        *((ROOT + 0x28) as *mut u64) = (MPA_ROOT >> 2) | PTE_VALID;
+        *((ROOT.pa() + 0x00) as *mut u64) = (HVA.pa() >> 2) | PTE_VALID;
+        *((ROOT.pa() + 0x08) as *mut u64) = PTE_AD | PTE_RWXV;
+        *((ROOT.pa() + 0x10) as *mut u64) = (UVA.pa() >> 2) | PTE_VALID;
+        *((ROOT.pa() + 0x18) as *mut u64) = (KVA.pa() >> 2) | PTE_VALID;
+        *((ROOT.pa() + 0x20) as *mut u64) = (MVA.pa() >> 2) | PTE_VALID;
+        *((ROOT.pa() + 0x28) as *mut u64) = (MPA.pa() >> 2) | PTE_VALID;
 
-        *((HVA_ROOT + 0x00) as *mut u64) = 0x00000000 | PTE_AD | PTE_RWXV;
-        *((HVA_ROOT + 0x08) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
-        *((HVA_ROOT + 0x10) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
-        *((HVA_ROOT + 0x18) as *mut u64) = 0x30000000 | PTE_AD | PTE_RWXV;
+        *((HVA.pa() + 0x00) as *mut u64) = 0x00000000 | PTE_AD | PTE_RWXV;
+        *((HVA.pa() + 0x08) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
+        *((HVA.pa() + 0x10) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
+        *((HVA.pa() + 0x18) as *mut u64) = 0x30000000 | PTE_AD | PTE_RWXV;
 
-        *((MPA_ROOT + 0x00) as *mut u64) = 0x00000000 | PTE_AD | PTE_USER | PTE_RWXV;
-        *((MPA_ROOT + 0x08) as *mut u64) = 0x10000000 | PTE_AD | PTE_USER | PTE_RWXV;
-        map_region(MPA_OFFSET + 0x80000000,
+        println!("root satp: {:#x}", ROOT.satp());
+        csrw!(satp, ROOT.satp() as usize);
+        asm!("sfence.vma" :::: "volatile");
+    }
+
+    unsafe {
+        map_region(MPA.offset() + 0x80000000,
                    machine.guest_shift + 0x80000000,
                    machine.gpm_size,
                    PTE_AD | PTE_USER | PTE_RWXV);
-
-        // Map hypervisor into all address spaces at same location.
-        // TODO: Make sure this address in compatible with Linux.
-        *((ROOT + 0xff8) as *mut u64) = (HVA_ROOT >> 2) | PTE_VALID;
-        *((HVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
-        *((UVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
-        *((KVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
-        *((MVA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
-        *((MPA_ROOT + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
     }
 
-    csrw!(satp, ROOT_SATP);
-    unsafe { asm!("sfence.vma" :::: "volatile"); }
+    MPA[0] = 0x00000000 | PTE_AD | PTE_USER | PTE_RWXV;
+    MPA[1] = 0x10000000 | PTE_AD | PTE_USER | PTE_RWXV;
+
+    // Map hypervisor into all address spaces at same location.
+    // TODO: Make sure this address in compatible with Linux.
+    ROOT[511] = (HVA.pa() >> 2) | PTE_VALID;
+    HVA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
+    UVA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
+    KVA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
+    MVA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
+    MPA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
+
 
     csrs!(sstatus, crate::trap::constants::STATUS_SUM);
 }
