@@ -26,38 +26,14 @@ mod pte_flags {
 }
 use pte_flags::*;
 
-#[allow(unused)]
 mod page_table_constants {
-    // pub const ROOT: u64 = 0x80010000;
-    // pub const HVA_ROOT: u64 = 0x80011000; 
-    // pub const UVA_ROOT: u64 = 0x80012000; 
-    // pub const KVA_ROOT: u64 = 0x80013000; // 
-    // pub const MVA_ROOT: u64 = 0x80014000; //
-    // pub const MPA_ROOT: u64 = 0x80015000; 
     pub const BOOT_PAGE_TABLE: u64 = 0x80016000;
 
-    // pub const HVA_INDEX: u64 = 0;
     pub const HPA_INDEX: u64 = 1;
-    // pub const UVA_INDEX: u64 = 2;
-    // pub const KVA_INDEX: u64 = 3;
-    // pub const MVA_INDEX: u64 = 4;
-    // pub const MPA_INDEX: u64 = 5;
-
-    // pub const HVA_OFFSET: u64 = HVA_INDEX << 39;
     pub const HPA_OFFSET: u64 = HPA_INDEX << 39;
-    // pub const UVA_OFFSET: u64 = UVA_INDEX << 39;
-    // pub const KVA_OFFSET: u64 = KVA_INDEX << 39;
-    // pub const MVA_OFFSET: u64 = MVA_INDEX << 39;
-    // pub const MPA_OFFSET: u64 = MPA_INDEX << 39;
 
     pub const HYPERVISOR_HOLE: u64 = 0xffffffff_c0000000;
     pub const HVA_TO_XVA: u64 = HYPERVISOR_HOLE - 0x40000000;
-
-    // pub const ROOT_SATP: usize = 9 << 60 | (ROOT >> 12) as usize;
-    // pub const UVA_SATP: usize = (8 << 60 | (UVA_INDEX << 44) | (UVA_ROOT >> 12)) as usize;
-    // pub const KVA_SATP: usize = (8 << 60 | (KVA_INDEX << 44) | (KVA_ROOT >> 12)) as usize;
-    // pub const MVA_SATP: usize = (8 << 60 | (MVA_INDEX << 44) | (MVA_ROOT >> 12)) as usize;
-    // pub const MPA_SATP: usize = (8 << 60 | (MPA_INDEX << 44) | (MPA_ROOT >> 12)) as usize;
 }
 pub use page_table_constants::*;
 
@@ -134,6 +110,12 @@ impl IndexMut<u64> for PageTableRoot {
 }
 
 fn pa2va(pa: u64) -> u64 { pa + HPA_OFFSET }
+fn va2pa(va: u64) -> u64 {
+     // Must be in HPA region.
+    assert!(va >= HPA_OFFSET);
+    assert!(va < HPA_OFFSET + (1u64<<39));
+    va - HPA_OFFSET
+}
 
 #[repr(transparent)]
 struct Page([u8; PAGE_SIZE as usize]);
@@ -170,7 +152,7 @@ unsafe fn pte_for_addr(addr: u64) -> *mut u64 {
             page_table = pa2va((pte >> 10) << 12) as *mut u64;
         } else {
             let page = alloc_page();
-            *page_table.add(pte_index) = ((page as u64) >> 2) | PTE_VALID;
+            *page_table.add(pte_index) = (va2pa(page as u64) >> 2) | PTE_VALID;
             page_table = page as *mut u64;
         }
     }
@@ -190,11 +172,6 @@ pub unsafe fn map_region(va: u64, pa: u64, len: u64, perm: u64) {
 }
 
 pub fn init(machine: &MachineMeta) {
-    let mut addr = MAX_TSTACK_ADDR;
-    while addr < machine.hpm_offset as usize + fdt::VM_RESERVATION_SIZE {
-        free_page(addr as *mut Page);
-        addr += PAGE_SIZE as usize;
-    }
 
     unsafe {
         // Zero out page tables
@@ -218,10 +195,19 @@ pub fn init(machine: &MachineMeta) {
         *((HVA.pa() + 0x10) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
         *((HVA.pa() + 0x18) as *mut u64) = 0x30000000 | PTE_AD | PTE_RWXV;
 
-        println!("root satp: {:#x}", ROOT.satp());
         csrw!(satp, ROOT.satp() as usize);
         asm!("sfence.vma" :::: "volatile");
+
+        let mut i = 0;
+        let mut addr = MAX_TSTACK_ADDR;
+        while addr < machine.hpm_offset as usize + fdt::VM_RESERVATION_SIZE {
+            free_page(pa2va(addr as u64) as *mut Page);
+            addr += PAGE_SIZE as usize;
+            i += 1;
+        }
+        println!("About to map");
     }
+
 
     unsafe {
         map_region(MPA.offset() + 0x80000000,
