@@ -363,10 +363,6 @@ static SHADOW_STATE: Mutex<ShadowState> = Mutex::new(ShadowState::new());
 
 #[no_mangle]
 pub unsafe fn strap() -> u64 {
-    // TODO: execute this earlier
-    csrw!(satp, 9 << 60 | (pmap::ROOT >> 12) as usize);
-
-    println!("Trap!");
     let cause = csrr!(scause);
     let status = csrr!(sstatus);
 
@@ -385,11 +381,10 @@ pub unsafe fn strap() -> u64 {
             forward_interrupt(&mut state, cause, csrr!(sepc));
         }
     } else if cause == 12 || cause == 13 || cause == 15 {
-        println!("sepc = {:#x}", csrr!(sepc));
-        println!("stval = {:#x}", csrr!(stval));
-        println!("cause = {}", cause);
+        println!("Page Fault (cause={})", cause);
+        println!(" sepc = {:#x}", csrr!(sepc));
+        println!(" stval = {:#x}", csrr!(stval));
         loop {}
-        // TODO: Handle page fault
     } else if cause == 2 && state.smode {
         let pc = csrr!(sepc);
         let il = *((pc + pmap::MPA_OFFSET as usize) as *const u16);
@@ -408,15 +403,9 @@ pub unsafe fn strap() -> u64 {
                 csrw!(sepc, state.sepc);
             }
             Some(fence @ Instruction::SfenceVma(_)) => pmap::handle_sfence_vma(&mut state, fence),
-            Some(Instruction::Csrrw(i)) => {
-                if let Some(prev) = state.get_csr(i.csr()) {
-                    state.set_csr(i.csr(), get_register(i.rs1()));
-                    set_register(i.rd(), prev);
-                } else {
-                    println!("Attempted to read bad CSR={:#x}, rs1={}, rd={}", i.csr(), i.rs1(), i.rd());
-                    println!("instruction={:#x}, len={}, decoded={:?}", instruction, len, decoded);
-                    println!("PC={:#x}", pc);
-                }
+            Some(Instruction::Csrrw(i)) => if let Some(prev) = state.get_csr(i.csr()) {
+                state.set_csr(i.csr(), get_register(i.rs1()));
+                set_register(i.rd(), prev);
             }
             Some(Instruction::Csrrs(i)) => if let Some(prev) = state.get_csr(i.csr()) {
                 state.set_csr(i.csr(), prev | get_register(i.rs1()));
@@ -445,19 +434,20 @@ pub unsafe fn strap() -> u64 {
         }
         csrw!(sepc, pc + len);
     } else if cause == 8 && state.smode {
-        println!("SMode");
-        asm!("
-          lw a0, 10*4($0)
-          lw a1, 11*4($0)
-          lw a2, 12*4($0)
-          lw a3, 13*4($0)
-          lw a4, 14*4($0)
-          lw a5, 15*4($0)
-          lw a6, 16*4($0)
-          lw a7, 17*4($0)
-          ecall
-          sw a7, 17*4($0)"
-             :: "r"(SSTACK_BASE) : "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7": "volatile");
+        println!("Got ecall from guest!");
+        loop {}
+        // asm!("
+        //   lw a0, 10*4($0)
+        //   lw a1, 11*4($0)
+        //   lw a2, 12*4($0)
+        //   lw a3, 13*4($0)
+        //   lw a4, 14*4($0)
+        //   lw a5, 15*4($0)
+        //   lw a6, 16*4($0)
+        //   lw a7, 17*4($0)
+        //   ecall
+        //   sw a7, 17*4($0)"
+        //      :: "r"(SSTACK_BASE) : "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7": "volatile");
         csrw!(sepc, csrr!(sepc) + 4);
     } else {
         forward_exception(&mut state, cause, csrr!(sepc));
