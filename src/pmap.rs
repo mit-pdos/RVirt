@@ -155,7 +155,7 @@ pub fn is_sv48(va: u64) -> bool {
     shifted == 0 || shifted == 0x1ffff
 }
 
-
+#[allow(unused)]
 pub enum AccessType {
     Read,
     Write,
@@ -221,13 +221,11 @@ unsafe fn pte_for_addr(addr: u64) -> *mut u64 {
 
 // Returns the host physical address associated with a given guest virtual address, by walking guest
 // page tables.
-pub fn translate_address(root_page_table: u64, addr: u64, access_type: AccessType) -> Option<u64> {
-    // if addr >> 39 != 0 {
-    //     println!("1");
-    //     return None;
-    // }
+pub fn translate_address(root_page_table: u64, addr: u64, _access_type: AccessType) -> Option<u64> {
+    if !is_sv39(addr) {
+        return None;
+    }
     if root_page_table > unsafe{MAX_GUEST_PHYSICAL_ADDRESS} || root_page_table % PAGE_SIZE != 0 {
-        println!("2");
         return None;
     }
 
@@ -249,9 +247,8 @@ pub fn translate_address(root_page_table: u64, addr: u64, access_type: AccessTyp
                 _ => unreachable!(),
             })
         } else {
-            page_table = ((pte >> 10) << 12);
+            page_table = (pte >> 10) << 12;
             if page_table > unsafe { MAX_GUEST_PHYSICAL_ADDRESS } {
-                println!("4");
                 return None;
             }
         }

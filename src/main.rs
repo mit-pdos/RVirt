@@ -89,7 +89,7 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
             let ret = elf::load_elf((start + pmap::HPA_OFFSET) as *const u8,
                                     (machine.hpm_offset + machine.guest_shift + pmap::HPA_OFFSET) as *mut u8);
             entry = ret.0;
-            guest_dtb = ret.1;
+            guest_dtb = (ret.1 | 0xfff) + 1;
 
         } else {
             // TODO: proper length
@@ -105,7 +105,7 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
 
         // Jump into the guest kernel.
         //
-        // First we set a1 with a pointer to the device tree block.  Ideally the preceeding moves
+        // First we set a1 with a pointer to the device tree block. Ideally the preceeding moves
         // into s1..s3 shouldn't be necessary, but LLVM doesn't seem to be honoring the listed
         // clobber registers and insists on passing one of the inputs in a1 so we have to save the
         // inputs before setting a1 to $2. Next we jump to high addresses (offset passed in

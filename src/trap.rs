@@ -403,9 +403,9 @@ pub unsafe fn strap() -> u64 {
                 let host_pa = pmap::mpa2pa(guest_pa);
 
                 let pte = state.shadow().get_pte(page);
-                unsafe {
-                    *pte = (host_pa >> 2) | pmap::PTE_AD| pmap::PTE_USER | pmap::PTE_RWXV;
-                }
+                *pte = (host_pa >> 2) | pmap::PTE_AD| pmap::PTE_USER | pmap::PTE_RWXV;
+
+                // TODO: update accessed and dirty bits.
             } else {
                 // println!("satp: {:#x}", state.satp);
                 println!("forwarding page fault: \n sepc = {:#x}, stval = {:#x}, stvec = {:#x}",
@@ -460,7 +460,6 @@ pub unsafe fn strap() -> u64 {
             }
             _ => {
                 println!("Unrecognized instruction!");
-                loop {}
                 forward_exception(&mut state, cause, pc)
             }
         }
