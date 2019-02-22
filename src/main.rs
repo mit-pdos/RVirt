@@ -70,17 +70,14 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
    csrw!(sie, 0x888);
 
     unsafe {
+        // Read and process host FDT.
         let fdt = Fdt::new(device_tree_blob);
         assert!(fdt.magic_valid());
         assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
-        // fdt.print();
         let machine = fdt.process();
-        // header.print();
 
+        // Initialize memory subsystem.
         pmap::init(&machine);
-
-        // // Load guest FDT
-        // println!("fdt_size={} KB", fdt_size >> 10);
 
         // Load guest binary
         let entry;
@@ -99,9 +96,12 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
         }
         csrw!(sepc, entry as usize);
 
+        // Load and mask guest FDT.
         core::ptr::copy((device_tree_blob as u64 + pmap::HPA_OFFSET) as *const u8,
                         pmap::MPA.address_to_pointer(guest_dtb),
                         fdt.total_size() as usize);
+        let fdt = Fdt::new(pmap::MPA.address_to_pointer::<u8>(guest_dtb) as usize);
+        fdt.process();
 
         // Jump into the guest kernel.
         //

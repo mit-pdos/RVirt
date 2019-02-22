@@ -324,9 +324,6 @@ impl ShadowState {
                 let changed = self.sstatus ^ value;
                 self.sstatus = value;
 
-                if changed & STATUS_SUM != 0 {
-                    unimplemented!("STATUS.SUM");
-                }
                 if changed & STATUS_MXR != 0 {
                     unimplemented!("STATUS.MXR");
                 }
@@ -466,6 +463,7 @@ pub unsafe fn strap() -> u64 {
         csrw!(sepc, pc + len);
     } else if cause == 8 && state.smode {
         match get_register(17) {
+            0 => {/* TODO: set a timer */}
             1 => print!("{}", get_register(10) as u8 as char),
             i => {
                 println!("Got ecall from guest function={}!", i);
