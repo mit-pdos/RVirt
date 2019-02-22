@@ -68,7 +68,6 @@ unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
 fn sstart(_hartid: usize, device_tree_blob: usize) {
    csrw!(stvec, crate::trap::strap_entry as *const () as usize + pmap::HVA_TO_XVA as usize);
    csrw!(sie, 0x888);
-   println!("Hello World!");
 
     unsafe {
         let fdt = Fdt::new(device_tree_blob);
@@ -78,36 +77,53 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
         let machine = fdt.process();
         // header.print();
 
-        println!("FDT loaded");
         pmap::init(&machine);
-        println!("Memory initialized");
 
-        // pmap::print_page_table(pmap::MPA_ROOT, 3);
+        // // Load guest FDT
+        // println!("fdt_size={} KB", fdt_size >> 10);
 
+        // Load guest binary
+        let entry;
+        let guest_dtb;
         if let (Some(start), Some(_end)) = (machine.initrd_start, machine.initrd_end) {
-            println!("Loading guest kernel... {:#x}-{:#x}", start, _end);
-            let entry = elf::load_elf((start + pmap::HPA_OFFSET) as *const u8,
-                                      (machine.hpm_offset + machine.guest_shift + pmap::HPA_OFFSET) as *mut u8);
-            csrw!(sepc, ((entry as usize) + 3) & !3);
+            let ret = elf::load_elf((start + pmap::HPA_OFFSET) as *const u8,
+                                    (machine.hpm_offset + machine.guest_shift + pmap::HPA_OFFSET) as *mut u8);
+            entry = ret.0;
+            guest_dtb = ret.1;
 
         } else {
             // TODO: proper length
             core::ptr::copy(u_entry as *const u8, pmap::MPA.address_to_pointer(0x80000000), 0x10000);
-            println!("entry: {:#x}", *pmap::MPA.address_to_pointer::<u64>(0x80000000));
-            csrw!(sepc, 0x80000000);
+            entry = 0x80000000;
+            guest_dtb = 0x80000000 + 0x10000;
         }
+        csrw!(sepc, entry as usize);
 
-        asm!("auipc t0, 0
-              add t1, t0, $0
-              jr t1" :: "r"(pmap::HVA_TO_XVA + 10) : "t0", "t1" : "volatile");
+        core::ptr::copy((device_tree_blob as u64 + pmap::HPA_OFFSET) as *const u8,
+                        pmap::MPA.address_to_pointer(guest_dtb),
+                        fdt.total_size() as usize);
 
-        const MPA_SATP: usize = pmap::MPA.satp() as usize;
-        println!("Booting guest... satp={:#x}", MPA_SATP);
+        // Jump into the guest kernel.
+        //
+        // First we set a1 with a pointer to the device tree block.  Ideally the preceeding moves
+        // into s1..s3 shouldn't be necessary, but LLVM doesn't seem to be honoring the listed
+        // clobber registers and insists on passing one of the inputs in a1 so we have to save the
+        // inputs before setting a1 to $2. Next we jump to high addresses (offset passed in
+        // $0). After that we install guest page tables (satp passed in $1) and do a TLB
+        // flush. Finally, we clear out all remaining registers and issue an sret.
+        asm!("mv s0, $0
+              mv s1, $1
+              mv s2, $2
 
-        csrw!(satp, MPA_SATP);
-        asm!("sfence.vma" :::: "volatile");
+              mv a1, s2
 
-        asm!("mv a1, $0
+              auipc t0, 0
+              add t1, t0, s0
+              jr t1
+
+              csrw 0x180, s1
+              sfence.vma
+
               li ra, 0
               li sp, 0
               li gp, 0
@@ -138,7 +154,7 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
               li t4, 0
               li t5, 0
               li t6, 0
-              sret" :: "r"(device_tree_blob) :: "volatile");
+              sret" :: "r"(pmap::HVA_TO_XVA + 10), "r"(pmap::MPA.satp()), "r"(guest_dtb) : "s0", "s1", "s2", "memory" : "volatile");
     }
 
     unreachable!();

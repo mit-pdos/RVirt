@@ -63,8 +63,8 @@ pub struct ProgramHeader64 {
     align: u64,
 }
 
-// Returns program entry point
-pub unsafe fn load_elf(data: *const u8, base_address: *mut u8) -> *const u8 {
+// Returns (program entry point, max_address)
+pub unsafe fn load_elf(data: *const u8, base_address: *mut u8) -> (u64, u64) {
     let elf = &*(data as *const Elf64);
     assert_eq!(elf.ident.magic, 0x464C457F);
     assert_eq!(elf.ident.class, 2); // 64-bit
@@ -73,6 +73,7 @@ pub unsafe fn load_elf(data: *const u8, base_address: *mut u8) -> *const u8 {
     assert_eq!(elf.type_, 2); // 64-bit
     assert_eq!(elf.version, 1);
 
+    let mut max_addr = 0;
     for i in 0..(elf.phnum as usize) {
         let ph = &*(data.add(elf.phoff as usize + i * elf.phentsize as usize) as *const ProgramHeader64);
 
@@ -86,9 +87,13 @@ pub unsafe fn load_elf(data: *const u8, base_address: *mut u8) -> *const u8 {
                 let dst = base_address.add((ph.pa + ph.file_size) as usize);
                 core::ptr::write_bytes(dst, 0, (ph.memory_size - ph.file_size) as usize);
             }
+
+            if max_addr < ph.pa + ph.memory_size {
+                max_addr = ph.pa + ph.memory_size;
+            }
         }
     }
 
     //    base_address.add(elf.entry as usize)
-    0x80000000 as *const u8
+    (0x80000000, 0x80000000 + max_addr)
 }

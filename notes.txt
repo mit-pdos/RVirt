@@ -14,3 +14,10 @@ https://github.com/riscv/riscv-qemu/blob/riscv-all/hw/riscv/virt.c
 Description of PLIC / CLINT
 ---------------------------
 https://static.dev.sifive.com/U54-MC-RVCoreIP.pdf
+
+
+
+Linux Constants
+---------------
+0xffffffe000000000: _start
+0xffffffe000000000: PAGE_OFFSET

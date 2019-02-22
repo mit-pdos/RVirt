@@ -9,6 +9,10 @@ const PAGE_SIZE: u64 = 4096;
 
 const PAGE_TABLE_SHIFT: u32 = 9;
 
+static mut MAX_GUEST_PHYSICAL_ADDRESS: u64 = 0;
+
+pub const SV39_MASK: u64 = !((!0) << 39);
+
 #[allow(unused)]
 mod pte_flags {
     pub const PTE_VALID: u64 = 0x1;
@@ -24,7 +28,7 @@ mod pte_flags {
     pub const PTE_AD: u64 = PTE_ACCESSED | PTE_DIRTY;
     pub const PTE_RWXV: u64 = PTE_READ | PTE_WRITE | PTE_EXECUTE | PTE_VALID;
 }
-use pte_flags::*;
+pub use pte_flags::*;
 
 mod page_table_constants {
     pub const BOOT_PAGE_TABLE: u64 = 0x80016000;
@@ -86,7 +90,20 @@ impl PageTableRoot {
     }
 
     pub fn address_to_pointer<T>(&self, addr: u64) -> *mut T {
-        (addr + self.offset()) as *mut T
+        if *self == ROOT {
+            assert!(is_sv48(addr));
+            addr as *mut T
+        } else {
+            assert!(is_sv39(addr));
+            ((addr & SV39_MASK) + self.offset()) as *mut T
+        }
+    }
+
+    pub fn get_pte(&self, addr: u64) -> *mut u64 {
+        let addr = addr & 0x7fffffffff;
+        unsafe {
+            pte_for_addr(addr + self.offset())
+        }
     }
 }
 
@@ -116,6 +133,34 @@ fn va2pa(va: u64) -> u64 {
     assert!(va < HPA_OFFSET + (1u64<<39));
     va - HPA_OFFSET
 }
+pub fn mpa2pa(mpa: u64) -> u64 {
+    if mpa < 0x80000000 {
+        return mpa;
+    } else if mpa < unsafe {MAX_GUEST_PHYSICAL_ADDRESS} {
+        mpa + fdt::VM_RESERVATION_SIZE as u64
+    } else {
+        println!("mpa={:#x}", mpa);
+        unreachable!();
+    }
+}
+
+/// Returns whether va is a sign extended 39 bit address
+pub fn is_sv39(va: u64) -> bool {
+    let shifted = va >> 38;
+    shifted == 0 || shifted == 0x3ffffff
+}
+/// Returns whether va is a sign extended 48 bit address
+pub fn is_sv48(va: u64) -> bool {
+    let shifted = va >> 47;
+    shifted == 0 || shifted == 0x1ffff
+}
+
+
+pub enum AccessType {
+    Read,
+    Write,
+    Execute,
+}
 
 #[repr(transparent)]
 struct Page([u8; PAGE_SIZE as usize]);
@@ -132,6 +177,8 @@ fn alloc_page() -> *mut Page {
     free.unwrap() as *const FreePage as *mut Page
 }
 fn free_page(page: *mut Page) {
+    // TODO: Why does this fail?
+    // unsafe { ptr::write_bytes(page, 0, PAGE_SIZE as usize); }
     let mut free_list = FREE_LIST.lock();
     let mut free_page: &mut FreePage = unsafe { &mut *(page as *mut FreePage) };
     free_page.0 = free_list.take();
@@ -172,6 +219,48 @@ unsafe fn pte_for_addr(addr: u64) -> *mut u64 {
     page_table.add((addr as usize >> 12) & 0x1ff)
 }
 
+// Returns the host physical address associated with a given guest virtual address, by walking guest
+// page tables.
+pub fn translate_address(root_page_table: u64, addr: u64, access_type: AccessType) -> Option<u64> {
+    // if addr >> 39 != 0 {
+    //     println!("1");
+    //     return None;
+    // }
+    if root_page_table > unsafe{MAX_GUEST_PHYSICAL_ADDRESS} || root_page_table % PAGE_SIZE != 0 {
+        println!("2");
+        return None;
+    }
+
+    let mut page_table = root_page_table;
+    for level in 0..3 {
+        let pte_index = ((addr >> (30 - 9 * level)) & 0x1ff) as usize;
+        let pte_ptr = unsafe { MPA.address_to_pointer::<u64>(page_table).add(pte_index) };
+        let pte = unsafe { *pte_ptr };
+        // println!("level={} page_table={:#x}, pte_ptr={:?}, pte={:#x}", level, page_table, pte_ptr, pte);
+
+        if pte & PTE_VALID == 0 || ((pte & PTE_WRITE) != 0 && (pte & PTE_READ) == 0) {
+            return None;
+        } else if pte & (PTE_READ | PTE_EXECUTE) == 0 {
+            // TODO: dirty + accessed bits
+            return Some(match level {
+                2 => ((pte >> 10) << 12) | (addr & 0xfff),
+                1 => ((pte >> 19) << 21) | (addr & 0x1fffff),
+                0 => ((pte >> 28) << 30) | (addr & 0x3fffffff),
+                _ => unreachable!(),
+            })
+        } else {
+            page_table = ((pte >> 10) << 12);
+            if page_table > unsafe { MAX_GUEST_PHYSICAL_ADDRESS } {
+                println!("4");
+                return None;
+            }
+        }
+    }
+
+    println!("5");
+    None
+}
+
 pub unsafe fn map_region(va: u64, pa: u64, len: u64, perm: u64) {
     assert_eq!(len % PAGE_SIZE, 0);
     assert_eq!(va % PAGE_SIZE, 0);
@@ -185,7 +274,6 @@ pub unsafe fn map_region(va: u64, pa: u64, len: u64, perm: u64) {
 }
 
 pub fn init(machine: &MachineMeta) {
-
     unsafe {
         // Zero out page tables
         ptr::write_bytes(ROOT.pa() as *mut u8, 0, PAGE_SIZE as usize);
@@ -211,12 +299,14 @@ pub fn init(machine: &MachineMeta) {
         csrw!(satp, ROOT.satp() as usize);
         asm!("sfence.vma" :::: "volatile");
 
+        assert_eq!(machine.gpm_offset, 0x80000000);
+        MAX_GUEST_PHYSICAL_ADDRESS = machine.gpm_offset + machine.gpm_size;
+
         let mut addr = MAX_TSTACK_ADDR;
         while addr < machine.hpm_offset as usize + fdt::VM_RESERVATION_SIZE {
             free_page(pa2va(addr as u64) as *mut Page);
             addr += PAGE_SIZE as usize;
         }
-        println!("About to map");
     }
 
 
@@ -258,6 +348,46 @@ pub fn print_page_table(pt: u64, level: u8) {
                 assert!(level != 0);
                 print_page_table((pte >> 10) << 12, level - 1);
             }
+        }
+
+    }
+}
+
+#[allow(unused)]
+pub fn print_guest_page_table(pt: u64, level: u8, base: u64) {
+    unsafe {
+        if pt >= MAX_GUEST_PHYSICAL_ADDRESS {
+            println!("[SATP Invalid]");
+            return;
+        }
+
+        for i in 0..512 {
+            let addr = base + (i << (12 + level * 9));
+            let pte = *MPA.address_to_pointer::<u64>(pt + i*8);
+            if pte == 0 {
+                continue;
+            }
+
+            for _ in 0..(2 - level) {
+                print!("__ ");
+            }
+
+            if pte & PTE_RWXV == PTE_VALID {
+                assert!(level != 0);
+                let child = (pte >> 10) << 12;
+                if child >= MAX_GUEST_PHYSICAL_ADDRESS {
+                    println!("{:#x}: {:#x} (bad ppn)", addr, pte);
+                } else {
+                    println!("{:#x}: {:#x}", addr, pte);
+                    print_guest_page_table(child, level - 1, addr);
+                    break;
+                }
+            } else if pte & PTE_VALID != 0 {
+                println!("{:#x} -> {:#x}", addr, (pte >> 10) << 12);
+            } else if pte != 0 {
+                println!("{:#x}: {:#x} (not valid)", addr, pte);
+            }
+
         }
 
     }

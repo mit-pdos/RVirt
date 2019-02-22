@@ -315,7 +315,7 @@ impl ShadowState {
     }
 
     pub fn set_csr(&mut self, csr: u32, value: usize) -> bool {
-        println!("setting CSR={:#x} to {:#x} (pc={:#x})", csr, value, csrr!(sepc));
+        // println!("setting CSR={:#x} to {:#x} (pc={:#x})", csr, value, csrr!(sepc));
         match csr as usize {
             csr::sstatus => {
                 // User interrupts not supported
@@ -391,10 +391,29 @@ pub unsafe fn strap() -> u64 {
             forward_interrupt(&mut state, cause, csrr!(sepc));
         }
     } else if cause == 12 || cause == 13 || cause == 15 {
-        println!("Page Fault (cause={})", cause);
-        println!(" sepc = {:#x}", csrr!(sepc));
-        println!(" stval = {:#x}", csrr!(stval));
-        loop {}
+        if state.shadow() == pmap::MPA {
+            println!("Page fault without guest paging enabled?");
+            forward_exception(&mut state, cause, csrr!(sepc));
+        } else {
+            let guest_va = csrr!(stval) as u64;
+            assert!((guest_va & pmap::SV39_MASK) < (511 << 30));
+
+            let page = guest_va & !0xfff;
+            if let Some(guest_pa) = pmap::translate_address(((state.satp & SATP_PPN) as u64) << 12, page, pmap::AccessType::Read) {
+                let host_pa = pmap::mpa2pa(guest_pa);
+
+                let pte = state.shadow().get_pte(page);
+                unsafe {
+                    *pte = (host_pa >> 2) | pmap::PTE_AD| pmap::PTE_USER | pmap::PTE_RWXV;
+                }
+            } else {
+                // println!("satp: {:#x}", state.satp);
+                println!("forwarding page fault: \n sepc = {:#x}, stval = {:#x}, stvec = {:#x}",
+                         csrr!(sepc) as u64 & pmap::SV39_MASK, guest_va & pmap::SV39_MASK, state.stvec);
+                // pmap::print_guest_page_table(((state.satp & SATP_PPN) as u64) << 12, 2, 0);
+                forward_exception(&mut state, cause, csrr!(sepc));
+            }
+        }
     } else if cause == 2 && state.smode {
         let pc = csrr!(sepc);
         let pc_ptr = state.shadow().address_to_pointer(pc as u64);
@@ -441,13 +460,20 @@ pub unsafe fn strap() -> u64 {
             }
             _ => {
                 println!("Unrecognized instruction!");
+                loop {}
                 forward_exception(&mut state, cause, pc)
             }
         }
         csrw!(sepc, pc + len);
     } else if cause == 8 && state.smode {
-        println!("Got ecall from guest!");
-        loop {}
+        match get_register(17) {
+            1 => print!("{}", get_register(10) as u8 as char),
+            i => {
+                println!("Got ecall from guest function={}!", i);
+                loop {}
+            }
+        }
+        csrw!(sepc, csrr!(sepc) + 4);
         // asm!("
         //   lw a0, 10*4($0)
         //   lw a1, 11*4($0)
@@ -461,7 +487,6 @@ pub unsafe fn strap() -> u64 {
         //   sw a7, 17*4($0)"
         //      :: "r"(SSTACK_BASE) : "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7": "volatile");
 
-        // csrw!(sepc, csrr!(sepc) + 4);
     } else {
         forward_exception(&mut state, cause, csrr!(sepc));
     }
