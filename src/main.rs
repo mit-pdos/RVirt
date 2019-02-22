@@ -89,13 +89,13 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
             let ret = elf::load_elf((start + pmap::HPA_OFFSET) as *const u8,
                                     (machine.hpm_offset + machine.guest_shift + pmap::HPA_OFFSET) as *mut u8);
             entry = ret.0;
-            guest_dtb = (ret.1 | 0xfff) + 1;
+            guest_dtb = (ret.1 | 0x1fffff) + 1;
 
         } else {
             // TODO: proper length
             core::ptr::copy(u_entry as *const u8, pmap::MPA.address_to_pointer(0x80000000), 0x10000);
             entry = 0x80000000;
-            guest_dtb = 0x80000000 + 0x10000;
+            guest_dtb = 0x80000000 + 0x200000;
         }
         csrw!(sepc, entry as usize);
 
