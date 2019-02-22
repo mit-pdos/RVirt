@@ -133,14 +133,13 @@ fn va2pa(va: u64) -> u64 {
     assert!(va < HPA_OFFSET + (1u64<<39));
     va - HPA_OFFSET
 }
-pub fn mpa2pa(mpa: u64) -> u64 {
+pub fn mpa2pa(mpa: u64) -> Option<u64> {
     if mpa < 0x80000000 {
-        return mpa;
+        None
     } else if mpa < unsafe {MAX_GUEST_PHYSICAL_ADDRESS} {
-        mpa + fdt::VM_RESERVATION_SIZE as u64
+        Some(mpa + fdt::VM_RESERVATION_SIZE as u64)
     } else {
-        println!("mpa={:#x}", mpa);
-        unreachable!();
+        None
     }
 }
 
@@ -306,16 +305,12 @@ pub fn init(machine: &MachineMeta) {
         }
     }
 
-
     unsafe {
         map_region(MPA.offset() + 0x80000000,
                    machine.guest_shift + 0x80000000,
                    machine.gpm_size,
                    PTE_AD | PTE_USER | PTE_RWXV);
     }
-
-    MPA[0] = 0x00000000 | PTE_AD | PTE_USER | PTE_RWXV;
-    MPA[1] = 0x10000000 | PTE_AD | PTE_USER | PTE_RWXV;
 
     // Map hypervisor into all address spaces at same location.
     // TODO: Make sure this address in compatible with Linux.

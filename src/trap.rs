@@ -397,12 +397,15 @@ pub unsafe fn strap() -> u64 {
 
             let page = guest_va & !0xfff;
             if let Some(guest_pa) = pmap::translate_address(((state.satp & SATP_PPN) as u64) << 12, page, pmap::AccessType::Read) {
-                let host_pa = pmap::mpa2pa(guest_pa);
+                if let Some(host_pa) = pmap::mpa2pa(guest_pa) {
+                    let pte = state.shadow().get_pte(page);
+                    *pte = (host_pa >> 2) | pmap::PTE_AD| pmap::PTE_USER | pmap::PTE_RWXV;
 
-                let pte = state.shadow().get_pte(page);
-                *pte = (host_pa >> 2) | pmap::PTE_AD| pmap::PTE_USER | pmap::PTE_RWXV;
-
-                // TODO: update accessed and dirty bits.
+                    // TODO: update accessed and dirty bits.
+                } else {
+                    println!("Guest page table specified invalid guest address");
+                    forward_exception(&mut state, cause, csrr!(sepc));
+                }
             } else {
                 // println!("satp: {:#x}", state.satp);
                 println!("forwarding page fault: \n sepc = {:#x}, stval = {:#x}, stvec = {:#x}",
