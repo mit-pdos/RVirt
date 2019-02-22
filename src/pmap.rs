@@ -138,6 +138,19 @@ fn free_page(page: *mut Page) {
     *free_list = Some(free_page)
 }
 
+unsafe fn clear_page_table(pa: u64) {
+    let va = pa2va(pa) as *mut u64;
+    for i in 0..512 {
+        let pte = va.add(i);
+        if *pte & PTE_RWXV == PTE_VALID {
+            let page = (*pte >> 10) << 12;
+            clear_page_table(page);
+            free_page(pa2va(page) as *mut Page);
+        }
+        *pte = 0;
+    }
+}
+
 unsafe fn pte_for_addr(addr: u64) -> *mut u64 {
     // These ranges use huge pages...
     assert!(addr >> 39 != HVA.index());
@@ -198,12 +211,10 @@ pub fn init(machine: &MachineMeta) {
         csrw!(satp, ROOT.satp() as usize);
         asm!("sfence.vma" :::: "volatile");
 
-        let mut i = 0;
         let mut addr = MAX_TSTACK_ADDR;
         while addr < machine.hpm_offset as usize + fdt::VM_RESERVATION_SIZE {
             free_page(pa2va(addr as u64) as *mut Page);
             addr += PAGE_SIZE as usize;
-            i += 1;
         }
         println!("About to map");
     }
@@ -253,5 +264,11 @@ pub fn print_page_table(pt: u64, level: u8) {
 }
 
 pub fn handle_sfence_vma(_state: &mut ShadowState, _instruction: Instruction) {
-    unimplemented!("sfence.vma")
+    // TODO: Don't always to global fence
+    unsafe {
+        clear_page_table(UVA.pa());
+        clear_page_table(KVA.pa());
+        clear_page_table(MVA.pa());
+        asm!("sfence.vma" :::: "volatile");
+    }
 }
