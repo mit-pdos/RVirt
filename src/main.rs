@@ -28,10 +28,6 @@ use trap::constants::*;
 #[start] fn start(_argc: isize, _argv: *const *const u8) -> isize {0}
 #[no_mangle] pub fn abort() -> ! { println!("Abort!"); loop {}}
 
-extern {
-    static mtrap_entry_offset: usize;
-}
-
 #[naked]
 #[no_mangle]
 #[link_section = ".text.init"]
@@ -46,12 +42,62 @@ unsafe fn _start() {
 #[link_section = ".text.init"]
 unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
     // Initialize some control registers
-    csrs!(mideleg, 0x222);
+    csrs!(mideleg, 0xffff);
     csrs!(medeleg, 0xb1ff);
-    csrw!(mtvec, mtrap_entry_offset + 0x80000000);
     csrw!(mie, 0x888);
     csrs!(mstatus, STATUS_MPP_S);
     csrw!(mepc, sstart as usize);
+
+    asm!("auipc t0, 0
+          c.addi t0, 18
+          csrw 0x305, t0 // mtvec
+          c.j continue
+
+.align 4
+mtrap_entry:
+          csrw 0x340, sp // mscratch
+          li sp, 0x80300000
+          sd t0, 0(sp)
+          sd t1, 8(sp)
+
+          csrr t0, 0x342 // mcause
+          li t1, 0x8000000000000003
+          beq t0, t1, msoftware_interrupt
+
+          li t1, 0x8000000000000007
+          beq t0, t1, mtimer_interrupt
+
+          li t1, 0x800000000000000b
+          beq t0, t1, mexternal_interrupt
+
+unknown_cause:
+          j unknown_cause
+
+msoftware_interrupt:
+          j msoftware_interrupt
+
+mtimer_interrupt:
+          li t0, 0x80
+          csrc 0x344, t0 // mip.mtip = 0
+
+          li t0, 0x20
+          csrs 0x144, t0 // sip.stip = 1
+
+          li t0, 0xffffffffffffffff
+          li t1, 0x2004000
+          sd t0, 0(t1)  // mtimecmp0 = -1
+
+          j return
+
+mexternal_interrupt:
+          j mexternal_interrupt
+
+return:
+          ld t0, 0(sp)
+          ld t1, 8(sp)
+          csrr sp, 0x340 // mscratch
+          mret
+continue:" ::: "t0"  : "volatile");
 
     // Minimal page table to boot into S mode.
     *((pmap::BOOT_PAGE_TABLE + 0) as *mut u64) = 0x00000000 | 0xcf;
@@ -67,7 +113,7 @@ unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
 
 fn sstart(_hartid: usize, device_tree_blob: usize) {
    csrw!(stvec, crate::trap::strap_entry as *const () as usize + pmap::HVA_TO_XVA as usize);
-   csrw!(sie, 0x888);
+   csrw!(sie, 0xfff);
 
     unsafe {
         // Read and process host FDT.

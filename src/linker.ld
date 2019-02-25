@@ -44,7 +44,5 @@ SECTIONS
     *(COMMON)
   }
 
-  ASSERT(. < 0x80400000, "")
-
-  mtrap_entry_offset = mtrap_entry - 0x80000000;
+  ASSERT(. < 0x80300000, "")
 }

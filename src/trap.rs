@@ -51,6 +51,10 @@ use self::constants::*;
 
 pub const MAX_TSTACK_ADDR: usize = 0x80400000;
 
+pub const CLINT_ADDRESS: u64 = 0x2000000;
+pub const CLINT_MTIMECMP0_OFFSET: u64 = 0x4000;
+pub const CLINT_MTIME_OFFSET: u64 = 0x0000BFF8;
+
 trait UsizeBits {
     fn get(&self, mask: Self) -> bool;
     fn set(&mut self, mask: Self, value: bool);
@@ -71,86 +75,6 @@ impl UsizeBits for usize {
 // 0x340 = mscratch
 // 0x140 = sscratch
 
-#[naked]
-#[no_mangle]
-pub unsafe fn mtrap_entry() -> ! {
-    asm!(".align 4
-          csrw 0x340, sp
-          li sp, 0x80300000
-          addi sp, sp, -16*8
-          sd ra, 0*8(sp)
-          sd t0, 1*8(sp)
-          sd t1, 2*8(sp)
-          sd t2, 3*8(sp)
-          sd t3, 4*8(sp)
-          sd t4, 5*8(sp)
-          sd t5, 6*8(sp)
-          sd t6, 7*8(sp)
-          sd a0, 8*8(sp)
-          sd a1, 9*8(sp)
-          sd a2, 10*8(sp)
-          sd a3, 11*8(sp)
-          sd a4, 12*8(sp)
-          sd a5, 13*8(sp)
-          sd a6, 14*8(sp)
-          sd a7, 15*8(sp)
-
-          jal ra, mtrap
-
-          ld ra, 0*8(sp)
-          ld t0, 1*8(sp)
-          ld t1, 2*8(sp)
-          ld t2, 3*8(sp)
-          ld t3, 4*8(sp)
-          ld t4, 5*8(sp)
-          ld t5, 6*8(sp)
-          ld t6, 7*8(sp)
-          ld a0, 8*8(sp)
-          ld a1, 9*8(sp)
-          ld a2, 10*8(sp)
-          ld a3, 11*8(sp)
-          ld a4, 12*8(sp)
-          ld a5, 13*8(sp)
-          ld a6, 14*8(sp)
-          ld a7, 15*8(sp)
-          csrr sp, 0x340
-          mret" :::: "volatile");
-
-    unreachable!()
-}
-
-#[no_mangle]
-pub unsafe fn mtrap() {
-    let cause = csrr!(mcause);
-    match ((cause as isize) < 0, cause & 0xff) {
-        (true, 0...3) => println!("software interrupt"),
-        (true, 4...7) => println!("timer interrupt"),
-        (true, 8...11) => println!("external interrupt"),
-        (true, _) => println!("reserved interrupt"),
-        (false, 0) => println!("instruction address misaligned"),
-        (false, 1) => {
-            println!("instruction access fault @ {:8x}", csrr!(mepc))
-        }
-        (false, 2) => println!("illegal instruction: {:x}", csrr!(mepc)),
-        (false, 3) => println!("breakpoint"),
-        (false, 4) => println!("load address misaligned"),
-        (false, 5) => println!("load access fault"),
-        (false, 6) => println!("store/AMO address misaligned"),
-        (false, 7) => println!("store/AMO access fault"),
-        (false, 8...11) => {
-            println!("environment call");
-            csrw!(mepc, csrr!(mepc) + 4);
-            return;
-        }
-        (false, 12) => println!("instruction page fault"),
-        (false, 13) => println!("load page fault"),
-        (false, 14) => println!("reserved exception #14"),
-        (false, 15) => println!("store/AMO page fault"),
-        (false, _) => println!("reserved exception"),
-    }
-
-    loop {}
-}
 
 #[naked]
 #[no_mangle]
@@ -382,6 +306,7 @@ pub unsafe fn strap() -> u64 {
 
     let mut state = SHADOW_STATE.lock();
     if (cause as isize) < 0 {
+        csrw!(sip, 0);
         let enabled = state.sstatus.get(STATUS_SIE);
         let unmasked = state.sie & (1 << (cause & 0xff)) != 0;
         if (!state.smode || enabled) && unmasked {
@@ -466,7 +391,13 @@ pub unsafe fn strap() -> u64 {
         csrw!(sepc, pc + len);
     } else if cause == 8 && state.smode {
         match get_register(17) {
-            0 => {/* TODO: set a timer */}
+            0 => {
+                let mtime = *((CLINT_ADDRESS + CLINT_MTIME_OFFSET) as *const u64);
+                let schedule = mtime + get_register(10) as u64;
+                println!("Setting timer for {} (mtime = {})", schedule, mtime);
+
+                *((CLINT_ADDRESS + CLINT_MTIMECMP0_OFFSET) as *mut u64) = schedule;
+            }
             1 => print!("{}", get_register(10) as u8 as char),
             i => {
                 println!("Got ecall from guest function={}!", i);
@@ -474,19 +405,6 @@ pub unsafe fn strap() -> u64 {
             }
         }
         csrw!(sepc, csrr!(sepc) + 4);
-        // asm!("
-        //   lw a0, 10*4($0)
-        //   lw a1, 11*4($0)
-        //   lw a2, 12*4($0)
-        //   lw a3, 13*4($0)
-        //   lw a4, 14*4($0)
-        //   lw a5, 15*4($0)
-        //   lw a6, 16*4($0)
-        //   lw a7, 17*4($0)
-        //   ecall
-        //   sw a7, 17*4($0)"
-        //      :: "r"(SSTACK_BASE) : "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7": "volatile");
-
     } else {
         forward_exception(&mut state, cause, csrr!(sepc));
     }
