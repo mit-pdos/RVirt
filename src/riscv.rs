@@ -78,16 +78,16 @@ macro_rules! csrsi {
     };
 }
 
-// #[macro_export]
-// macro_rules! csrc {
-//     ( $r:ident, $x:expr ) => {
-//         {
-//             let x: usize = $x;
-//             #[allow(unused_unsafe)]
-//             unsafe { asm!("csrc $0, $1" :: "i"(crate::csr::$r), "r"(x)) };
-//         }
-//     };
-// }
+#[macro_export]
+macro_rules! csrc {
+    ( $r:ident, $x:expr ) => {
+        {
+            let x: usize = $x;
+            #[allow(unused_unsafe)]
+            unsafe { asm!("csrc $0, $1" :: "i"(crate::csr::$r), "r"(x)) };
+        }
+    };
+}
 
 // #[macro_export]
 // macro_rules! csrci {

@@ -127,7 +127,7 @@ pub unsafe fn strap_entry() -> ! {
 
           jal ra, strap
 
-          // Save return address
+          // Save return value
           sd a0, 0(sp)
 
           // Load other registers
@@ -162,7 +162,7 @@ pub unsafe fn strap_entry() -> ! {
           ld t5, 30*8(sp)
           ld t6, 31*8(sp)
 
-          // Load return address and use it to set SATP
+          // Load value address and use it to set SATP
           ld sp, 0(sp)
           csrw 0x180, sp
 
@@ -180,7 +180,7 @@ pub struct ShadowState {
 
     sstatus: usize,
     sie: usize,
-    // sip: usize, -- checked dynamically on read
+    sip: usize,
     stvec: usize,
     // scounteren: usize, -- Hard-wired to zero
     sscratch: usize,
@@ -188,6 +188,8 @@ pub struct ShadowState {
     scause: usize,
     stval: usize,
     satp: usize,
+
+    mtimecmp: u64,
 
     // Whether the guest is in S-Mode.
     smode: bool,
@@ -198,11 +200,14 @@ impl ShadowState {
             sstatus: 0,
             stvec: 0,
             sie: 0,
+            sip: 0,
             sscratch: 0,
             sepc: 0,
             scause: 0,
             stval: 0,
             satp: 0,
+
+            mtimecmp: u64::max_value(),
 
             smode: true,
         }
@@ -230,7 +235,7 @@ impl ShadowState {
             csr::sepc => self.sepc,
             csr::scause => self.scause,
             csr::stval => self.stval,
-            csr::sip => csrr!(sip),
+            csr::sip => self.sip,
             csr::sedeleg => 0,
             csr::sideleg => 0,
             csr::scounteren => 0,
@@ -267,7 +272,7 @@ impl ShadowState {
             csr::sepc => self.sepc = value,
             csr::scause => self.scause = value,
             csr::stval => self.stval = value,
-            csr::sip => csrs!(sip, value & IP_SSIP),
+            csr::sip => self.sip = (self.sip & !IP_SSIP) | (value & IP_SSIP),
             csr::sedeleg |
             csr::sideleg |
             csr::scounteren => {}
@@ -306,12 +311,16 @@ pub unsafe fn strap() -> u64 {
 
     let mut state = SHADOW_STATE.lock();
     if (cause as isize) < 0 {
+        // let cause = if cause & 0xff == 1 {
+        //     // Treat software interrupts as timer interrupts so we can reset them without an SBI
+        //     // call.
+        //     0x8000000000000005
+        // } else {
+        //     cause
+        // };
         csrw!(sip, 0);
-        let enabled = state.sstatus.get(STATUS_SIE);
-        let unmasked = state.sie & (1 << (cause & 0xff)) != 0;
-        if (!state.smode || enabled) && unmasked {
-            forward_interrupt(&mut state, cause, csrr!(sepc));
-        }
+        state.sip = state.sip | (1 << (cause & 0xff));
+        handle_interrupt(&mut state, cause);
     } else if cause == 12 || cause == 13 || cause == 15 {
         if state.shadow() == pmap::MPA {
             println!("Page fault without guest paging enabled?");
@@ -357,6 +366,14 @@ pub unsafe fn strap() -> u64 {
                 state.smode = state.sstatus.get(STATUS_SPP);
                 state.sstatus.set(STATUS_SPP, false);
                 csrw!(sepc, state.sepc);
+
+                if state.sip.get(IP_SSIP) {
+                    println!("Software interupt?");
+                    handle_interrupt(&mut state, 0x8000000000000001);
+                } else if state.sip.get(IP_STIP) {
+                    println!("Timer interupt?");
+                    handle_interrupt(&mut state, 0x8000000000000005);
+                }
             }
             Some(fence @ Instruction::SfenceVma(_)) => pmap::handle_sfence_vma(&mut state, fence),
             Some(Instruction::Csrrw(i)) => if let Some(prev) = state.get_csr(i.csr()) {
@@ -392,11 +409,14 @@ pub unsafe fn strap() -> u64 {
     } else if cause == 8 && state.smode {
         match get_register(17) {
             0 => {
-                let mtime = *((CLINT_ADDRESS + CLINT_MTIME_OFFSET) as *const u64);
-                let schedule = mtime + get_register(10) as u64;
-                println!("Setting timer for {} (mtime = {})", schedule, mtime);
+                let ticks = get_register(10) as u64;
+                let mtime = get_mtime();
 
-                *((CLINT_ADDRESS + CLINT_MTIMECMP0_OFFSET) as *mut u64) = schedule;
+                state.sip.set(IP_STIP, false);
+                state.mtimecmp = mtime + ticks*100;
+
+                println!("Setting timer to fire in {} ticks (mtime = {})", ticks, mtime);
+                set_mtimecmp0(state.mtimecmp);
             }
             1 => print!("{}", get_register(10) as u8 as char),
             i => {
@@ -412,18 +432,24 @@ pub unsafe fn strap() -> u64 {
     state.shadow().satp()
 }
 
-fn forward_interrupt(state: &mut ShadowState, cause: usize, sepc: usize) {
-    state.push_sie();
-    state.sepc = sepc;
-    state.scause = cause;
-    state.sstatus.set(STATUS_SPP, state.smode);
-    state.stval = 0;
-    state.smode = true;
+fn handle_interrupt(state: &mut ShadowState, cause: usize) {
+    let enabled = state.sstatus.get(STATUS_SIE);
+    let unmasked = state.sie & (1 << (cause & 0xff)) != 0;
 
-    match state.stvec & TVEC_MODE {
-        0 => csrw!(sepc, state.stvec & TVEC_BASE),
-        1 => csrw!(sepc, (state.stvec & TVEC_BASE) + 4 * cause & 0xff),
-        _ => unreachable!(),
+    if (!state.smode || enabled) && unmasked {
+        // forward interrupt
+        state.push_sie();
+        state.sepc = csrr!(sepc);
+        state.scause = cause;
+        state.sstatus.set(STATUS_SPP, state.smode);
+        state.stval = 0;
+        state.smode = true;
+
+        match state.stvec & TVEC_MODE {
+            0 => csrw!(sepc, state.stvec & TVEC_BASE),
+            1 => csrw!(sepc, (state.stvec & TVEC_BASE) + 4 * cause & 0xff),
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -452,4 +478,11 @@ fn get_register(reg: u32) -> usize {
         2 => csrr!(sscratch),
         _ => unreachable!(),
     }
+}
+
+fn get_mtime() -> u64 {
+    unsafe { *((CLINT_ADDRESS + CLINT_MTIME_OFFSET) as *const u64) }
+}
+fn set_mtimecmp0(value: u64) {
+    unsafe { *((CLINT_ADDRESS + CLINT_MTIMECMP0_OFFSET) as *mut u64) = value; }
 }

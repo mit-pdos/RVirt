@@ -83,7 +83,7 @@ mtimer_interrupt:
           li t0, 0x20
           csrs 0x144, t0 // sip.stip = 1
 
-          li t0, 0xffffffffffffffff
+          li t0, 0xffffffff
           li t1, 0x2004000
           sd t0, 0(t1)  // mtimecmp0 = -1
 
