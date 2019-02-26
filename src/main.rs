@@ -17,6 +17,7 @@ mod print;
 mod csr;
 mod elf;
 mod fdt;
+mod pfault;
 mod pmap;
 mod trap;
 

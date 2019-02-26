@@ -134,11 +134,19 @@ fn va2pa(va: u64) -> u64 {
     va - HPA_OFFSET
 }
 pub fn mpa2pa(mpa: u64) -> Option<u64> {
-    if mpa < 0x80000000 {
+    if mpa >= 0x80000000 && mpa < unsafe {MAX_GUEST_PHYSICAL_ADDRESS} {
+        return Some(mpa + fdt::VM_RESERVATION_SIZE as u64);
+    }
+
+    if mpa < 0x0c000000 { // DEBUG, MROM, TEST and CLINT inaccessible
         None
-    } else if mpa < unsafe {MAX_GUEST_PHYSICAL_ADDRESS} {
-        Some(mpa + fdt::VM_RESERVATION_SIZE as u64)
-    } else {
+    } else if mpa < 0x10000000 { // PLIC is directly accessible
+        Some(mpa)
+    } else if mpa < 0x10001000 { // UART0 inaccessible
+        None
+    } else if mpa < 0x80000000 { // VIRTIO and PCIe accessible
+        Some(mpa)
+    } else { // High memory inacessible
         None
     }
 }
@@ -218,9 +226,14 @@ unsafe fn pte_for_addr(addr: u64) -> *mut u64 {
     page_table.add((addr as usize >> 12) & 0x1ff)
 }
 
-// Returns the host physical address associated with a given guest virtual address, by walking guest
-// page tables.
-pub fn translate_address(root_page_table: u64, addr: u64, _access_type: AccessType) -> Option<u64> {
+pub struct AddressTranslation {
+    pub pte: *mut u64,
+    pub guest_pa: u64,
+}
+
+// Returns the guest physical address associated with a given guest virtual address, by walking
+// guest page tables.
+pub fn translate_guest_address(root_page_table: u64, addr: u64, _access_type: AccessType) -> Option<AddressTranslation> {
     if !is_sv39(addr) {
         return None;
     }
@@ -237,14 +250,15 @@ pub fn translate_address(root_page_table: u64, addr: u64, _access_type: AccessTy
 
         if pte & PTE_VALID == 0 || ((pte & PTE_WRITE) != 0 && (pte & PTE_READ) == 0) {
             return None;
-        } else if pte & (PTE_READ | PTE_EXECUTE) == 0 {
+        } else if pte & (PTE_READ | PTE_EXECUTE) != 0 {
             // TODO: dirty + accessed bits
-            return Some(match level {
+            let guest_pa = match level {
                 2 => ((pte >> 10) << 12) | (addr & 0xfff),
                 1 => ((pte >> 19) << 21) | (addr & 0x1fffff),
                 0 => ((pte >> 28) << 30) | (addr & 0x3fffffff),
                 _ => unreachable!(),
-            })
+            };
+            return Some(AddressTranslation { guest_pa, pte: pte_ptr });
         } else {
             page_table = (pte >> 10) << 12;
             if page_table > unsafe { MAX_GUEST_PHYSICAL_ADDRESS } {
@@ -253,7 +267,6 @@ pub fn translate_address(root_page_table: u64, addr: u64, _access_type: AccessTy
         }
     }
 
-    println!("5");
     None
 }
 

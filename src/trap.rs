@@ -1,6 +1,6 @@
 use spin::Mutex;
 use riscv_decode::Instruction;
-use crate::{csr, pmap};
+use crate::{csr, pfault, pmap};
 
 #[allow(unused)]
 pub mod constants {
@@ -178,21 +178,21 @@ pub struct ShadowState {
     // sedeleg: usize, -- Hard-wired to zero
     // sideleg: usize, -- Hard-wired to zero
 
-    sstatus: usize,
-    sie: usize,
-    sip: usize,
-    stvec: usize,
+    pub sstatus: usize,
+    pub sie: usize,
+    pub sip: usize,
+    pub stvec: usize,
     // scounteren: usize, -- Hard-wired to zero
-    sscratch: usize,
-    sepc: usize,
-    scause: usize,
-    stval: usize,
-    satp: usize,
+    pub sscratch: usize,
+    pub sepc: usize,
+    pub scause: usize,
+    pub stval: usize,
+    pub satp: usize,
 
-    mtimecmp: u64,
+    pub mtimecmp: u64,
 
     // Whether the guest is in S-Mode.
-    smode: bool,
+    pub smode: bool,
 }
 impl ShadowState {
     pub const fn new() -> Self {
@@ -323,31 +323,9 @@ pub unsafe fn strap() -> u64 {
         // println!("Got interrupt at pc={:#x}, smode={}, spp={}", csrr!(sepc), state.smode, state.sstatus.get(STATUS_SPP));
         handle_interrupt(&mut state, cause, csrr!(sepc));
     } else if cause == 12 || cause == 13 || cause == 15 {
-        if state.shadow() == pmap::MPA {
-            println!("Page fault without guest paging enabled?");
-            forward_exception(&mut state, cause, csrr!(sepc));
-        } else {
-            let guest_va = csrr!(stval) as u64;
-            assert!((guest_va & pmap::SV39_MASK) < (511 << 30));
-
-            let page = guest_va & !0xfff;
-            if let Some(guest_pa) = pmap::translate_address(((state.satp & SATP_PPN) as u64) << 12, page, pmap::AccessType::Read) {
-                if let Some(host_pa) = pmap::mpa2pa(guest_pa) {
-                    let pte = state.shadow().get_pte(page);
-                    *pte = (host_pa >> 2) | pmap::PTE_AD| pmap::PTE_USER | pmap::PTE_RWXV;
-
-                    // TODO: update accessed and dirty bits.
-                } else {
-                    println!("Guest page table specified invalid guest address");
-                    forward_exception(&mut state, cause, csrr!(sepc));
-                }
-            } else {
-                // println!("satp: {:#x}", state.satp);
-                println!("forwarding page fault: \n sepc = {:#x}, stval = {:#x}, stvec = {:#x}",
-                         csrr!(sepc) as u64 & pmap::SV39_MASK, guest_va & pmap::SV39_MASK, state.stvec);
-                // pmap::print_guest_page_table(((state.satp & SATP_PPN) as u64) << 12, 2, 0);
-                forward_exception(&mut state, cause, csrr!(sepc));
-            }
+        let pc = csrr!(sepc);
+        if !pfault::handle_page_fault(&mut state, cause, pc) {
+            forward_exception(&mut state, cause, pc);
         }
     } else if cause == 2 && state.smode {
         let pc = csrr!(sepc);
