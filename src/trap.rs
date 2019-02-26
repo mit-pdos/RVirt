@@ -320,7 +320,8 @@ pub unsafe fn strap() -> u64 {
         // };
         csrw!(sip, 0);
         state.sip = state.sip | (1 << (cause & 0xff));
-        handle_interrupt(&mut state, cause);
+        // println!("Got interrupt at pc={:#x}, smode={}, spp={}", csrr!(sepc), state.smode, state.sstatus.get(STATUS_SPP));
+        handle_interrupt(&mut state, cause, csrr!(sepc));
     } else if cause == 12 || cause == 13 || cause == 15 {
         if state.shadow() == pmap::MPA {
             println!("Page fault without guest paging enabled?");
@@ -360,20 +361,22 @@ pub unsafe fn strap() -> u64 {
             _ => unreachable!(),
         };
         let decoded = riscv_decode::try_decode(instruction);
+
+        let mut advance_pc = true;
         match decoded {
             Some(Instruction::Sret) => {
                 state.pop_sie();
                 state.smode = state.sstatus.get(STATUS_SPP);
                 state.sstatus.set(STATUS_SPP, false);
                 csrw!(sepc, state.sepc);
-
-                if state.sip.get(IP_SSIP) {
-                    println!("Software interupt?");
-                    handle_interrupt(&mut state, 0x8000000000000001);
-                } else if state.sip.get(IP_STIP) {
-                    println!("Timer interupt?");
-                    handle_interrupt(&mut state, 0x8000000000000005);
-                }
+                advance_pc = false;
+                // if state.sip.get(IP_SSIP) {
+                //     println!("Software interupt?");
+                //     handle_interrupt(&mut state, 0x8000000000000001, csrr!(sepc));
+                // } else if state.sip.get(IP_STIP) {
+                //     println!("Timer interupt?");
+                //     handle_interrupt(&mut state, 0x8000000000000005, csrr!(sepc));
+                // }
             }
             Some(fence @ Instruction::SfenceVma(_)) => pmap::handle_sfence_vma(&mut state, fence),
             Some(Instruction::Csrrw(i)) => if let Some(prev) = state.get_csr(i.csr()) {
@@ -401,11 +404,14 @@ pub unsafe fn strap() -> u64 {
                 set_register(i.rd(), prev);
             }
             _ => {
-                println!("Unrecognized instruction!");
-                forward_exception(&mut state, cause, pc)
+                println!("Unrecognized instruction! {:#x} @ pc={:#x}", instruction, pc);
+                forward_exception(&mut state, cause, pc);
+                advance_pc = false;
             }
         }
-        csrw!(sepc, pc + len);
+        if advance_pc {
+            csrw!(sepc, pc + len);
+        }
     } else if cause == 8 && state.smode {
         match get_register(17) {
             0 => {
@@ -415,7 +421,7 @@ pub unsafe fn strap() -> u64 {
                 state.sip.set(IP_STIP, false);
                 state.mtimecmp = mtime + ticks*100;
 
-                println!("Setting timer to fire in {} ticks (mtime = {})", ticks, mtime);
+                // println!("Setting timer to fire in {} ticks (mtime = {})", ticks, mtime);
                 set_mtimecmp0(state.mtimecmp);
             }
             1 => print!("{}", get_register(10) as u8 as char),
@@ -426,20 +432,22 @@ pub unsafe fn strap() -> u64 {
         }
         csrw!(sepc, csrr!(sepc) + 4);
     } else {
+        println!("Forward exception (cause = {}, smode={})!", cause, state.smode);
         forward_exception(&mut state, cause, csrr!(sepc));
     }
 
     state.shadow().satp()
 }
 
-fn handle_interrupt(state: &mut ShadowState, cause: usize) {
+fn handle_interrupt(state: &mut ShadowState, cause: usize, sepc: usize) {
     let enabled = state.sstatus.get(STATUS_SIE);
     let unmasked = state.sie & (1 << (cause & 0xff)) != 0;
 
     if (!state.smode || enabled) && unmasked {
+        // println!("||> Forwarding timer interrupt! (state.smode={}, sepc={:#x})", state.smode, sepc);
         // forward interrupt
         state.push_sie();
-        state.sepc = csrr!(sepc);
+        state.sepc = sepc;
         state.scause = cause;
         state.sstatus.set(STATUS_SPP, state.smode);
         state.stval = 0;
@@ -454,6 +462,7 @@ fn handle_interrupt(state: &mut ShadowState, cause: usize) {
 }
 
 fn forward_exception(state: &mut ShadowState, cause: usize, sepc: usize) {
+    // println!("||> Forward exception sepc={:#x}", sepc);
     state.push_sie();
     state.sepc = sepc;
     state.scause = cause;
