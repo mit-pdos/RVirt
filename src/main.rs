@@ -41,6 +41,7 @@ unsafe fn _start() {
 }
 
 #[link_section = ".text.init"]
+#[inline(never)]
 unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     // Initialize some control registers
     csrs!(mideleg, 0xffff);
@@ -118,6 +119,7 @@ fn sstart(_hartid: u64, device_tree_blob: u64) {
 
     unsafe {
         // Read and process host FDT.
+        println!("dtb={:#x}", device_tree_blob);
         let fdt = Fdt::new(device_tree_blob);
         assert!(fdt.magic_valid());
         assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
