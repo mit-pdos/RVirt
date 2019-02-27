@@ -193,6 +193,8 @@ pub struct ShadowState {
 
     // Whether the guest is in S-Mode.
     pub smode: bool,
+
+    pub uart_dlab: bool,
 }
 impl ShadowState {
     pub const fn new() -> Self {
@@ -210,6 +212,8 @@ impl ShadowState {
             mtimecmp: u64::max_value(),
 
             smode: true,
+
+            uart_dlab: false,
         }
     }
     pub fn push_sie(&mut self) {
@@ -324,22 +328,12 @@ pub unsafe fn strap() -> u64 {
         handle_interrupt(&mut state, cause, csrr!(sepc));
     } else if cause == 12 || cause == 13 || cause == 15 {
         let pc = csrr!(sepc);
-        if !pfault::handle_page_fault(&mut state, cause, pc) {
+        if !pfault::handle_page_fault(&mut state, cause, pc as u64) {
             forward_exception(&mut state, cause, pc);
         }
     } else if cause == 2 && state.smode {
         let pc = csrr!(sepc);
-        let pc_ptr = state.shadow().address_to_pointer(pc as u64);
-
-        let il: u16 = *pc_ptr;
-        let len = riscv_decode::instruction_length(il);
-        let instruction = match len {
-            2 => il as u32,
-            4 => il as u32 | ((*pc_ptr.offset(1) as u32) << 16),
-            _ => unreachable!(),
-        };
-        let decoded = riscv_decode::try_decode(instruction);
-
+        let (decoded, len) = decode_instruction_at_address(&mut state, pc as u64);
         let mut advance_pc = true;
         match decoded {
             Some(Instruction::Sret) => {
@@ -381,14 +375,19 @@ pub unsafe fn strap() -> u64 {
                 state.set_csr(i.csr(), prev & !(i.zimm() as usize));
                 set_register(i.rd(), prev);
             }
-            _ => {
-                println!("Unrecognized instruction! {:#x} @ pc={:#x}", instruction, pc);
+            Some(decoded) => {
+                println!("Unrecognized instruction! {:?} @ pc={:#x}", decoded, pc);
+                forward_exception(&mut state, cause, pc);
+                advance_pc = false;
+            }
+            None => {
+                println!("Unrecognized instruction @ pc={:#x}", pc);
                 forward_exception(&mut state, cause, pc);
                 advance_pc = false;
             }
         }
         if advance_pc {
-            csrw!(sepc, pc + len);
+            csrw!(sepc, pc + len as usize);
         }
     } else if cause == 8 && state.smode {
         match get_register(17) {
@@ -450,7 +449,7 @@ fn forward_exception(state: &mut ShadowState, cause: usize, sepc: usize) {
     csrw!(sepc, state.stvec & TVEC_BASE);
 }
 
-fn set_register(reg: u32, value: usize) {
+pub fn set_register(reg: u32, value: usize) {
     match reg {
         0 => {},
         1 | 3..=31 => unsafe { *(SSTACK_BASE as *mut u64).offset(reg as isize) = value as u64; }
@@ -458,7 +457,7 @@ fn set_register(reg: u32, value: usize) {
         _ => unreachable!(),
     }
 }
-fn get_register(reg: u32) -> usize {
+pub fn get_register(reg: u32) -> usize {
     match reg {
         0 => 0,
         1 | 3..=31 => unsafe { *(SSTACK_BASE as *const u64).offset(reg as isize) as usize },
@@ -472,4 +471,17 @@ fn get_mtime() -> u64 {
 }
 fn set_mtimecmp0(value: u64) {
     unsafe { *((CLINT_ADDRESS + CLINT_MTIMECMP0_OFFSET) as *mut u64) = value; }
+}
+
+pub unsafe fn decode_instruction_at_address(state: &mut ShadowState, guest_va: u64) -> (Option<Instruction>, u64) {
+    let pc_ptr = state.shadow().address_to_pointer(guest_va);
+
+    let il: u16 = *pc_ptr;
+    let len = riscv_decode::instruction_length(il);
+    let instruction = match len {
+        2 => il as u32,
+        4 => il as u32 | ((*pc_ptr.offset(1) as u32) << 16),
+        _ => unreachable!(),
+    };
+    (riscv_decode::try_decode(instruction), len as u64)
 }
