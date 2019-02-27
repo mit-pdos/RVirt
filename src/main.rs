@@ -41,13 +41,13 @@ unsafe fn _start() {
 }
 
 #[link_section = ".text.init"]
-unsafe fn mstart(hartid: usize, device_tree_blob: usize) {
+unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     // Initialize some control registers
     csrs!(mideleg, 0xffff);
     csrs!(medeleg, 0xb1ff);
     csrw!(mie, 0x888);
     csrs!(mstatus, STATUS_MPP_S);
-    csrw!(mepc, sstart as usize);
+    csrw!(mepc, sstart as u64);
 
     asm!("auipc t0, 0
           c.addi t0, 18
@@ -105,15 +105,15 @@ continue:" ::: "t0"  : "volatile");
     *((pmap::BOOT_PAGE_TABLE + 8) as *mut u64) = 0x20000000 | 0xcf;
     *((pmap::BOOT_PAGE_TABLE + 16) as *mut u64) = 0x20000000 | 0xcf;
     *((pmap::BOOT_PAGE_TABLE + 24) as *mut u64) = 0x30000000 | 0xcf;
-    csrw!(satp, 8 << 60 | (pmap::BOOT_PAGE_TABLE >> 12) as usize);
+    csrw!(satp, 8 << 60 | (pmap::BOOT_PAGE_TABLE >> 12));
 
     asm!("mv a0, $1
           mv a1, $0
           mret" :: "r"(device_tree_blob), "r"(hartid) :: "volatile");
 }
 
-fn sstart(_hartid: usize, device_tree_blob: usize) {
-   csrw!(stvec, crate::trap::strap_entry as *const () as usize + pmap::HVA_TO_XVA as usize);
+fn sstart(_hartid: u64, device_tree_blob: u64) {
+   csrw!(stvec, crate::trap::strap_entry as *const () as u64 + pmap::HVA_TO_XVA);
    csrw!(sie, 0xfff);
 
     unsafe {
@@ -141,13 +141,13 @@ fn sstart(_hartid: usize, device_tree_blob: usize) {
             entry = 0x80000000;
             guest_dtb = 0x80000000 + 0x200000;
         }
-        csrw!(sepc, entry as usize);
+        csrw!(sepc, entry);
 
         // Load and mask guest FDT.
-        core::ptr::copy((device_tree_blob as u64 + pmap::HPA_OFFSET) as *const u8,
+        core::ptr::copy((device_tree_blob + pmap::HPA_OFFSET) as *const u8,
                         pmap::MPA.address_to_pointer(guest_dtb),
                         fdt.total_size() as usize);
-        let fdt = Fdt::new(pmap::MPA.address_to_pointer::<u8>(guest_dtb) as usize);
+        let fdt = Fdt::new(pmap::MPA.address_to_pointer::<u8>(guest_dtb) as u64);
         fdt.process();
 
         // Jump into the guest kernel.

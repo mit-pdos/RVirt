@@ -5,7 +5,7 @@ const FDT_PROP: u32 = 0x03000000;
 const FDT_NOP: u32 = 0x04000000;
 const FDT_END: u32 = 0x09000000;
 
-pub const VM_RESERVATION_SIZE: usize = 0x4000000; // 64MB
+pub const VM_RESERVATION_SIZE: u64 = 0x4000000; // 64MB
 
 #[derive(Default)]
 pub struct MachineMeta {
@@ -38,7 +38,7 @@ pub struct Fdt {
 }
 #[allow(unused)]
 impl Fdt {
-    pub unsafe fn new(addr: usize) -> &'static Self {
+    pub unsafe fn new(addr: u64) -> &'static Self {
         &*(addr as *const Self)
     }
 
@@ -162,11 +162,11 @@ impl Fdt {
 
     // Mask out entries from FDT and return some information about the machine.
     pub unsafe fn process(&self) -> MachineMeta {
-        let mut initrd_start: Option<usize> = None;
-        let mut initrd_end: Option<usize> = None;
+        let mut initrd_start: Option<u64> = None;
+        let mut initrd_end: Option<u64> = None;
 
         let mut meta = MachineMeta {
-            guest_shift: VM_RESERVATION_SIZE as u64,
+            guest_shift: VM_RESERVATION_SIZE,
             .. Default::default()
         };
 

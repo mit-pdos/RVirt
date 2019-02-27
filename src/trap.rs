@@ -4,62 +4,62 @@ use crate::{csr, pfault, pmap};
 
 #[allow(unused)]
 pub mod constants {
-    pub const TVEC_MODE: usize = 0x3;
-    pub const TVEC_BASE: usize = !TVEC_MODE;
+    pub const TVEC_MODE: u64 = 0x3;
+    pub const TVEC_BASE: u64 = !TVEC_MODE;
 
-    pub const STATUS_UIE: usize = 1 << 0;
-    pub const STATUS_SIE: usize = 1 << 1;
-    pub const STATUS_UPIE: usize = 1 << 4;
-    pub const STATUS_SPIE: usize = 1 << 5;
-    pub const STATUS_SPP: usize = 1 << 8;
-    pub const STATUS_FS: usize = 3 << 13;
-    pub const STATUS_XS: usize = 3 << 15;
-    pub const STATUS_SUM: usize = 1 << 18;
-    pub const STATUS_MXR: usize = 1 << 19;
-    pub const STATUS_SD: usize = 1 << 63;
+    pub const STATUS_UIE: u64 = 1 << 0;
+    pub const STATUS_SIE: u64 = 1 << 1;
+    pub const STATUS_UPIE: u64 = 1 << 4;
+    pub const STATUS_SPIE: u64 = 1 << 5;
+    pub const STATUS_SPP: u64 = 1 << 8;
+    pub const STATUS_FS: u64 = 3 << 13;
+    pub const STATUS_XS: u64 = 3 << 15;
+    pub const STATUS_SUM: u64 = 1 << 18;
+    pub const STATUS_MXR: u64 = 1 << 19;
+    pub const STATUS_SD: u64 = 1 << 63;
 
-    pub const STATUS_MPP_M: usize = 3 << 11;
-    pub const STATUS_MPP_S: usize = 1 << 11;
-    pub const STATUS_MPP_U: usize = 0 << 11;
+    pub const STATUS_MPP_M: u64 = 3 << 11;
+    pub const STATUS_MPP_S: u64 = 1 << 11;
+    pub const STATUS_MPP_U: u64 = 0 << 11;
 
     // Mask of writable bits in sstatus.
-    pub const SSTATUS_WRITABLE_MASK: usize =
+    pub const SSTATUS_WRITABLE_MASK: u64 =
         STATUS_MXR |
         STATUS_SUM |
         STATUS_FS |
         STATUS_SPP |
         STATUS_SPIE |
         STATUS_SIE;
-    pub const SSTATUS_DYNAMIC_MASK: usize = STATUS_SD | STATUS_FS;
+    pub const SSTATUS_DYNAMIC_MASK: u64 = STATUS_SD | STATUS_FS;
 
-    pub const IP_SSIP: usize = 1 << 1;
-    pub const IP_STIP: usize = 1 << 5;
-    pub const IP_SEIP: usize = 1 << 9;
+    pub const IP_SSIP: u64 = 1 << 1;
+    pub const IP_STIP: u64 = 1 << 5;
+    pub const IP_SEIP: u64 = 1 << 9;
 
-    pub const IE_SSIE: usize = 1 << 1;
-    pub const IE_STIE: usize = 1 << 5;
-    pub const IE_SEIE: usize = 1 << 9;
+    pub const IE_SSIE: u64 = 1 << 1;
+    pub const IE_STIE: u64 = 1 << 5;
+    pub const IE_SEIE: u64 = 1 << 9;
 
-    pub const SATP_MODE: usize = 0xf << 60;
-    pub const SATP_ASID: usize = 0xffff << 44;
-    pub const SATP_PPN: usize = 0xfff_ffffffff;
+    pub const SATP_MODE: u64 = 0xf << 60;
+    pub const SATP_ASID: u64 = 0xffff << 44;
+    pub const SATP_PPN: u64 = 0xfff_ffffffff;
 
-    pub const MSTACK_BASE: usize = 0x80300000 - 16*8;
-    pub const SSTACK_BASE: usize = 0x80400000 - 32*8;
+    pub const MSTACK_BASE: u64 = 0x80300000 - 16*8;
+    pub const SSTACK_BASE: u64 = 0x80400000 - 32*8;
 }
 use self::constants::*;
 
-pub const MAX_TSTACK_ADDR: usize = 0x80400000;
+pub const MAX_TSTACK_ADDR: u64 = 0x80400000;
 
 pub const CLINT_ADDRESS: u64 = 0x2000000;
 pub const CLINT_MTIMECMP0_OFFSET: u64 = 0x4000;
 pub const CLINT_MTIME_OFFSET: u64 = 0x0000BFF8;
 
-trait UsizeBits {
+trait U64Bits {
     fn get(&self, mask: Self) -> bool;
     fn set(&mut self, mask: Self, value: bool);
 }
-impl UsizeBits for usize {
+impl U64Bits for u64 {
     fn get(&self, mask: Self) -> bool {
         *self & mask != 0
     }
@@ -175,19 +175,19 @@ pub unsafe fn strap_entry() -> ! {
 
 #[derive(Default)]
 pub struct ShadowState {
-    // sedeleg: usize, -- Hard-wired to zero
-    // sideleg: usize, -- Hard-wired to zero
+    // sedeleg: u64, -- Hard-wired to zero
+    // sideleg: u64, -- Hard-wired to zero
 
-    pub sstatus: usize,
-    pub sie: usize,
-    pub sip: usize,
-    pub stvec: usize,
-    // scounteren: usize, -- Hard-wired to zero
-    pub sscratch: usize,
-    pub sepc: usize,
-    pub scause: usize,
-    pub stval: usize,
-    pub satp: usize,
+    pub sstatus: u64,
+    pub sie: u64,
+    pub sip: u64,
+    pub stvec: u64,
+    // scounteren: u64, -- Hard-wired to zero
+    pub sscratch: u64,
+    pub sepc: u64,
+    pub scause: u64,
+    pub stval: u64,
+    pub satp: u64,
 
     pub mtimecmp: u64,
 
@@ -225,8 +225,8 @@ impl ShadowState {
         self.sstatus.set(STATUS_SPIE, true);
     }
 
-    pub fn get_csr(&mut self, csr: u32) -> Option<usize> {
-        Some(match csr as usize {
+    pub fn get_csr(&mut self, csr: u32) -> Option<u64> {
+        Some(match csr as u64 {
             csr::sstatus => {
                 let real = csrr!(sstatus);
                 self.sstatus = (self.sstatus & !SSTATUS_DYNAMIC_MASK) | (real & SSTATUS_DYNAMIC_MASK);
@@ -247,9 +247,9 @@ impl ShadowState {
         })
     }
 
-    pub fn set_csr(&mut self, csr: u32, value: usize) -> bool {
+    pub fn set_csr(&mut self, csr: u32, value: u64) -> bool {
         // println!("setting CSR={:#x} to {:#x} (pc={:#x})", csr, value, csrr!(sepc));
-        match csr as usize {
+        match csr as u64 {
             csr::sstatus => {
                 // User interrupts not supported
                 let value = value & SSTATUS_WRITABLE_MASK;
@@ -328,12 +328,12 @@ pub unsafe fn strap() -> u64 {
         handle_interrupt(&mut state, cause, csrr!(sepc));
     } else if cause == 12 || cause == 13 || cause == 15 {
         let pc = csrr!(sepc);
-        if !pfault::handle_page_fault(&mut state, cause, pc as u64) {
+        if !pfault::handle_page_fault(&mut state, cause, pc) {
             forward_exception(&mut state, cause, pc);
         }
     } else if cause == 2 && state.smode {
         let pc = csrr!(sepc);
-        let (decoded, len) = decode_instruction_at_address(&mut state, pc as u64);
+        let (decoded, len) = decode_instruction_at_address(&mut state, pc);
         let mut advance_pc = true;
         match decoded {
             Some(Instruction::Sret) => {
@@ -364,15 +364,15 @@ pub unsafe fn strap() -> u64 {
                 set_register(i.rd(), prev);
             }
             Some(Instruction::Csrrwi(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                state.set_csr(i.csr(), i.zimm() as usize);
+                state.set_csr(i.csr(), i.zimm() as u64);
                 set_register(i.rd(), prev);
             }
             Some(Instruction::Csrrsi(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                state.set_csr(i.csr(), prev | (i.zimm() as usize));
+                state.set_csr(i.csr(), prev | (i.zimm() as u64));
                 set_register(i.rd(), prev);
             }
             Some(Instruction::Csrrci(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                state.set_csr(i.csr(), prev & !(i.zimm() as usize));
+                state.set_csr(i.csr(), prev & !(i.zimm() as u64));
                 set_register(i.rd(), prev);
             }
             Some(decoded) => {
@@ -387,12 +387,12 @@ pub unsafe fn strap() -> u64 {
             }
         }
         if advance_pc {
-            csrw!(sepc, pc + len as usize);
+            csrw!(sepc, pc + len);
         }
     } else if cause == 8 && state.smode {
         match get_register(17) {
             0 => {
-                let ticks = get_register(10) as u64;
+                let ticks = get_register(10);
                 let mtime = get_mtime();
 
                 state.sip.set(IP_STIP, false);
@@ -416,7 +416,7 @@ pub unsafe fn strap() -> u64 {
     state.shadow().satp()
 }
 
-fn handle_interrupt(state: &mut ShadowState, cause: usize, sepc: usize) {
+fn handle_interrupt(state: &mut ShadowState, cause: u64, sepc: u64) {
     let enabled = state.sstatus.get(STATUS_SIE);
     let unmasked = state.sie & (1 << (cause & 0xff)) != 0;
 
@@ -438,7 +438,7 @@ fn handle_interrupt(state: &mut ShadowState, cause: usize, sepc: usize) {
     }
 }
 
-fn forward_exception(state: &mut ShadowState, cause: usize, sepc: usize) {
+fn forward_exception(state: &mut ShadowState, cause: u64, sepc: u64) {
     // println!("||> Forward exception sepc={:#x}", sepc);
     state.push_sie();
     state.sepc = sepc;
@@ -449,7 +449,7 @@ fn forward_exception(state: &mut ShadowState, cause: usize, sepc: usize) {
     csrw!(sepc, state.stvec & TVEC_BASE);
 }
 
-pub fn set_register(reg: u32, value: usize) {
+pub fn set_register(reg: u32, value: u64) {
     match reg {
         0 => {},
         1 | 3..=31 => unsafe { *(SSTACK_BASE as *mut u64).offset(reg as isize) = value as u64; }
@@ -457,10 +457,10 @@ pub fn set_register(reg: u32, value: usize) {
         _ => unreachable!(),
     }
 }
-pub fn get_register(reg: u32) -> usize {
+pub fn get_register(reg: u32) -> u64 {
     match reg {
         0 => 0,
-        1 | 3..=31 => unsafe { *(SSTACK_BASE as *const u64).offset(reg as isize) as usize },
+        1 | 3..=31 => unsafe { *(SSTACK_BASE as *const u64).offset(reg as isize) as u64 },
         2 => csrr!(sscratch),
         _ => unreachable!(),
     }

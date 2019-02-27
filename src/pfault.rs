@@ -4,14 +4,14 @@ use riscv_decode::Instruction;
 
 /// Perform any handling required in response to a guest page fault. Returns true if the fault could
 /// be handled, or false if it should be forwarded on to the guest.
-pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: usize, pc: u64) -> bool {
+pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: u64, pc: u64) -> bool {
     let shadow = state.shadow();
     if shadow == MPA {
         println!("Page fault without guest paging enabled?");
         return false;
     }
 
-    let guest_va = csrr!(stval) as u64;
+    let guest_va = csrr!(stval);
     assert!((guest_va & SV39_MASK) < (511 << 30));
 
     let access = match cause {
@@ -22,7 +22,7 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: usize, pc: u64) 
     };
 
     let page = guest_va & !0xfff;
-    if let Some(translation) = translate_guest_address(((state.satp & SATP_PPN) as u64) << 12, page, AccessType::Read) {
+    if let Some(translation) = translate_guest_address((state.satp & SATP_PPN) << 12, page, AccessType::Read) {
         let guest_pte = *translation.pte;
 
         // Check R/W/X bits
@@ -65,8 +65,8 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: usize, pc: u64) 
     } else {
         // println!("satp: {:#x}", state.satp);
         println!("forwarding page fault: \n sepc = {:#x}, stval = {:#x}, stvec = {:#x}",
-                 csrr!(sepc) as u64 & SV39_MASK, guest_va & SV39_MASK, state.stvec);
-        // print_guest_page_table(((state.satp & SATP_PPN) as u64) << 12, 2, 0);
+                 csrr!(sepc) & SV39_MASK, guest_va & SV39_MASK, state.stvec);
+        // print_guest_page_table(((state.satp & SATP_PPN)) << 12, 2, 0);
         return false;
     }
 
@@ -75,7 +75,7 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: usize, pc: u64) 
 unsafe fn handle_uart_access(state: &mut ShadowState, guest_pa: u64, pc: u64) -> bool {
     let (decoded, len) = trap::decode_instruction_at_address(state, pc);
     match decoded {
-        Some(Instruction::Lb(i)) => trap::set_register(i.rd(), uart_read(state, guest_pa) as usize),
+        Some(Instruction::Lb(i)) => trap::set_register(i.rd(), uart_read(state, guest_pa) as u64),
         Some(Instruction::Sb(i)) => uart_write(state, guest_pa, (trap::get_register(i.rs2()) & 0xff) as u8),
         Some(instr) => {
             println!("UART: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, pc);
@@ -83,7 +83,7 @@ unsafe fn handle_uart_access(state: &mut ShadowState, guest_pa: u64, pc: u64) ->
         }
         _ => return false,
     }
-    csrw!(sepc, (pc + len) as usize);
+    csrw!(sepc, pc + len);
     true
 }
 

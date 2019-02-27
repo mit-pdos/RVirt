@@ -305,16 +305,16 @@ pub fn init(machine: &MachineMeta) {
         *((HVA.pa() + 0x10) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
         *((HVA.pa() + 0x18) as *mut u64) = 0x30000000 | PTE_AD | PTE_RWXV;
 
-        csrw!(satp, ROOT.satp() as usize);
+        csrw!(satp, ROOT.satp());
         asm!("sfence.vma" :::: "volatile");
 
         assert_eq!(machine.gpm_offset, 0x80000000);
         MAX_GUEST_PHYSICAL_ADDRESS = machine.gpm_offset + machine.gpm_size;
 
         let mut addr = MAX_TSTACK_ADDR;
-        while addr < machine.hpm_offset as usize + fdt::VM_RESERVATION_SIZE {
-            free_page(pa2va(addr as u64) as *mut Page);
-            addr += PAGE_SIZE as usize;
+        while addr < machine.hpm_offset + fdt::VM_RESERVATION_SIZE {
+            free_page(pa2va(addr) as *mut Page);
+            addr += PAGE_SIZE;
         }
     }
 
