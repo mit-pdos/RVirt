@@ -18,7 +18,7 @@ SVPN depends on a recent nightly version of rust installed via rustup, along wit
 
     $ sudo apt-get install binutils-riscv64-linux-gnu qemu-system-misc
     $ git clone https://github.com/fintelia/svpn && cd svpn
-    $ rustup target add riscv64-unknown-elf-ld
+    $ rustup target add riscv64imac-unknown-none-elf
     $ make
 
 To actually run SVPN, you'll need a guest binary. Grab the Fedora `vmlinux` kernel image from [here](https://fedorapeople.org/groups/risc-v/disk-images/) and place it in root of the repository. Now you can run with:
