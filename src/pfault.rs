@@ -1,5 +1,6 @@
 use crate::pmap::*;
 use crate::trap::{self, ShadowState, constants::SATP_PPN};
+use crate::print;
 use riscv_decode::Instruction;
 
 /// Perform any handling required in response to a guest page fault. Returns true if the fault could
@@ -58,6 +59,8 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: u64, pc: u64) ->
             return true;
         } else if translation.guest_pa >= 0x10000000 && translation.guest_pa < 0x10000100 && access != PTE_EXECUTE && state.smode {
             return handle_uart_access(state, (translation.guest_pa & !0xfff) | (guest_va & 0xfff), pc);
+        } else if translation.guest_pa >= 0x0c000000 && translation.guest_pa < 0x10000000 && access != PTE_EXECUTE && state.smode {
+            return handle_plic_access(state, (translation.guest_pa & !0xfff) | (guest_va & 0xfff), pc);
         } else {
             println!("Guest page table specified invalid guest address, va={:#x} pa={:#x}", guest_va, translation.guest_pa);
             return false;
@@ -69,11 +72,10 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: u64, pc: u64) ->
         // print_guest_page_table(((state.satp & SATP_PPN)) << 12, 2, 0);
         return false;
     }
-
 }
 
 unsafe fn handle_uart_access(state: &mut ShadowState, guest_pa: u64, pc: u64) -> bool {
-    let (decoded, len) = trap::decode_instruction_at_address(state, pc);
+    let (_instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
     match decoded {
         Some(Instruction::Lb(i)) => trap::set_register(i.rd(), uart_read(state, guest_pa) as u64),
         Some(Instruction::Sb(i)) => uart_write(state, guest_pa, (trap::get_register(i.rs2()) & 0xff) as u8),
@@ -104,7 +106,7 @@ fn uart_read(state: &mut ShadowState, addr: u64) -> u8 {
 }
 fn uart_write(state: &mut ShadowState, addr: u64, value: u8) {
     match (state.uart_dlab, addr, value) {
-        (false, 0x10000000, _) => print!("{}", value as char),
+        (false, 0x10000000, _) => print::guest_putchar(value),
         (true, 0x10000000, _) => {} // DLL divisor latch LSB
         (false, 0x10000001, 0) => {} // disable interrupts
         (false, 0x10000001, _) => {} // TODO: actually trigger some interrupts as requested
@@ -118,4 +120,30 @@ fn uart_write(state: &mut ShadowState, addr: u64, value: u8) {
             loop {}
         }
     }
+}
+
+unsafe fn handle_plic_access(state: &mut ShadowState, guest_pa: u64, pc: u64) -> bool {
+    let (instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
+    match decoded {
+        Some(Instruction::Lw(i)) => {
+            let value = state.plic.read_u32(guest_pa) as i32 as i64 as u64;
+            println!("PLIC: Read value {:#x} at address {:#x}", value, guest_pa);
+            trap::set_register(i.rd(), value)
+        }
+        Some(Instruction::Sw(i)) => {
+            let value = (trap::get_register(i.rs2()) & 0xff) as u32;
+            println!("PLIC: Writing {:#x} to address {:#x}", value, guest_pa);
+            state.plic.write_u32(guest_pa, value)
+        }
+        Some(instr) => {
+            println!("PLIC: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, pc);
+            loop {}
+        }
+        _ => {
+            println!("Unrecognized instruction targetting PLIC {:#x} at {:#x}!", instruction, pc);
+            loop {}
+        }
+    }
+    csrw!(sepc, pc + len);
+    true
 }

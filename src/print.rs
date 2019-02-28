@@ -28,6 +28,15 @@ pub mod uart {
 
 // see: https://os.phil-opp.com/printing-to-screen
 pub struct Writer { initialized: bool }
+impl Writer {
+    fn putchar(&mut self, c: u8) {
+        if !self.initialized {
+            uart::enable();
+            self.initialized = true;
+        }
+        uart::putchar(c);
+    }
+}
 impl fmt::Write for Writer {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         if !self.initialized {
@@ -47,10 +56,17 @@ macro_rules! print {
     ($($arg:tt)*) => ({
         use core::fmt::Write;
         use crate::print::WRITER;
-        WRITER.lock().write_fmt(format_args!($($arg)*)).unwrap();
+        let mut writer = WRITER.lock();
+        writer.write_str("\u{1b}[33m").unwrap();
+        writer.write_fmt(format_args!($($arg)*)).unwrap();
+        writer.write_str("\u{1b}[0m").unwrap();
     });
 }
 macro_rules! println {
     ($fmt:expr) => (print!(concat!($fmt, "\n")));
     ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
+}
+
+pub fn guest_putchar(c: u8) {
+    WRITER.lock().putchar(c);
 }

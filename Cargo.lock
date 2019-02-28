@@ -3,7 +3,7 @@
 [[package]]
 name = "riscv-decode"
 version = "0.1.0"
-source = "git+https://github.com/fintelia/riscv-decode.git#b1e7fad5de24655feca1b7fba5dc76b932c673f6"
+source = "git+https://github.com/fintelia/riscv-decode.git#fa095efa9bc00fe7fc61f5342db3526a98584c86"
 
 [[package]]
 name = "spin"

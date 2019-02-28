@@ -145,7 +145,17 @@ impl Fdt {
                     for _ in 0..indent { print!(" "); }
                     let prop = &*(ptr.offset(1) as *const Property);
                     let name = self.get_string(prop.name_offset());
-                    println!("Property: name={}, name_len={} len={} ", name, name.len(), prop.len());
+                    if prop.len() == 4 || prop.len() == 8 {
+                        println!("Property: name={}, value={:#x} ", name, prop.read_int());
+                    } else if prop.len() == 0 {
+                        println!("Property: name={}", name);
+                    } else {
+                        if let Some(value) = prop.value_str() {
+                            println!("Property: name={}, value=\"{}\"", name, value);
+                        } else {
+                            println!("Property: name={}, value_len={} ", name, prop.len());
+                        }
+                    }
                     ptr = ptr.offset(3 + (prop.len() as isize + 3) / 4);
                 }
                 FDT_NOP => {
@@ -268,5 +278,16 @@ impl Property {
         for i in 0..length {
             *(start.add(i)) = FDT_NOP;
         }
+    }
+    pub unsafe fn value_str(&self) -> Option<&str> {
+        if self.len() == 0 { return Some(""); }
+
+        for i in 0..(self.len() - 1) {
+            let c = *self.address().add(8 + i as usize);
+            if c < 32 || c > 126 {
+                return None;
+            }
+        }
+        core::str::from_utf8(core::slice::from_raw_parts(self.address().add(8), self.len() as usize)).ok()
     }
 }

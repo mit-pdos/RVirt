@@ -1,6 +1,7 @@
 use spin::Mutex;
 use riscv_decode::Instruction;
-use crate::{csr, pfault, pmap};
+use crate::{csr, pfault, pmap, print};
+use crate::plic::PlicState;
 
 #[allow(unused)]
 pub mod constants {
@@ -173,7 +174,6 @@ pub unsafe fn strap_entry() -> ! {
     unreachable!()
 }
 
-#[derive(Default)]
 pub struct ShadowState {
     // sedeleg: u64, -- Hard-wired to zero
     // sideleg: u64, -- Hard-wired to zero
@@ -195,6 +195,7 @@ pub struct ShadowState {
     pub smode: bool,
 
     pub uart_dlab: bool,
+    pub plic: PlicState,
 }
 impl ShadowState {
     pub const fn new() -> Self {
@@ -214,6 +215,8 @@ impl ShadowState {
             smode: true,
 
             uart_dlab: false,
+
+            plic: PlicState::new(),
         }
     }
     pub fn push_sie(&mut self) {
@@ -323,7 +326,7 @@ pub unsafe fn strap() -> u64 {
         //     cause
         // };
         csrw!(sip, 0);
-        state.sip = state.sip | (1 << (cause & 0xff));
+        // state.sip = state.sip | (1 << (cause & 0xff));
         // println!("Got interrupt at pc={:#x}, smode={}, spp={}", csrr!(sepc), state.smode, state.sstatus.get(STATUS_SPP));
         handle_interrupt(&mut state, cause, csrr!(sepc));
     } else if cause == 12 || cause == 13 || cause == 15 {
@@ -333,7 +336,7 @@ pub unsafe fn strap() -> u64 {
         }
     } else if cause == 2 && state.smode {
         let pc = csrr!(sepc);
-        let (decoded, len) = decode_instruction_at_address(&mut state, pc);
+        let (instruction, decoded, len) = decode_instruction_at_address(&mut state, pc);
         let mut advance_pc = true;
         match decoded {
             Some(Instruction::Sret) => {
@@ -381,7 +384,7 @@ pub unsafe fn strap() -> u64 {
                 advance_pc = false;
             }
             None => {
-                println!("Unrecognized instruction @ pc={:#x}", pc);
+                println!("Unrecognized instruction {:#x} @ pc={:#x}", instruction, pc);
                 forward_exception(&mut state, cause, pc);
                 advance_pc = false;
             }
@@ -392,16 +395,11 @@ pub unsafe fn strap() -> u64 {
     } else if cause == 8 && state.smode {
         match get_register(17) {
             0 => {
-                let ticks = get_register(10);
-                let mtime = get_mtime();
-
                 state.sip.set(IP_STIP, false);
-                state.mtimecmp = mtime + ticks*100;
-
-                // println!("Setting timer to fire in {} ticks (mtime = {})", ticks, mtime);
+                state.mtimecmp = get_mtime() + get_register(10)*100;
                 set_mtimecmp0(state.mtimecmp);
             }
-            1 => print!("{}", get_register(10) as u8 as char),
+            1 => print::guest_putchar(get_register(10) as u8),
             i => {
                 println!("Got ecall from guest function={}!", i);
                 loop {}
@@ -420,6 +418,9 @@ fn handle_interrupt(state: &mut ShadowState, cause: u64, sepc: u64) {
     let enabled = state.sstatus.get(STATUS_SIE);
     let unmasked = state.sie & (1 << (cause & 0xff)) != 0;
 
+    if cause & 0xff != 5 {
+        println!(">>>>>>>>>>>>>>>>> Interrupt with cause = {} >>>>>>>>>>>>>>>>>", cause & 0xff);
+    }
     if (!state.smode || enabled) && unmasked {
         // println!("||> Forwarding timer interrupt! (state.smode={}, sepc={:#x})", state.smode, sepc);
         // forward interrupt
@@ -473,7 +474,7 @@ fn set_mtimecmp0(value: u64) {
     unsafe { *((CLINT_ADDRESS + CLINT_MTIMECMP0_OFFSET) as *mut u64) = value; }
 }
 
-pub unsafe fn decode_instruction_at_address(state: &mut ShadowState, guest_va: u64) -> (Option<Instruction>, u64) {
+pub unsafe fn decode_instruction_at_address(state: &mut ShadowState, guest_va: u64) -> (u32, Option<Instruction>, u64) {
     let pc_ptr = state.shadow().address_to_pointer(guest_va);
 
     let il: u16 = *pc_ptr;
@@ -483,5 +484,5 @@ pub unsafe fn decode_instruction_at_address(state: &mut ShadowState, guest_va: u
         4 => il as u32 | ((*pc_ptr.offset(1) as u32) << 16),
         _ => unreachable!(),
     };
-    (riscv_decode::try_decode(instruction), len as u64)
+    (instruction, riscv_decode::try_decode(instruction), len as u64)
 }

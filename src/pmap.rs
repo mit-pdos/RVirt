@@ -138,11 +138,7 @@ pub fn mpa2pa(mpa: u64) -> Option<u64> {
         return Some(mpa + fdt::VM_RESERVATION_SIZE as u64);
     }
 
-    if mpa < 0x0c000000 { // DEBUG, MROM, TEST and CLINT inaccessible
-        None
-    } else if mpa < 0x10000000 { // PLIC is directly accessible
-        Some(mpa)
-    } else if mpa < 0x10001000 { // UART0 inaccessible
+    if mpa < 0x10001000 { // DEBUG, MROM, TEST, CLINT, PLIC, and UART0 inaccessible
         None
     } else if mpa < 0x80000000 { // VIRTIO and PCIe accessible
         Some(mpa)

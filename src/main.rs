@@ -18,6 +18,7 @@ mod csr;
 mod elf;
 mod fdt;
 mod pfault;
+mod plic;
 mod pmap;
 mod trap;
 
@@ -119,7 +120,6 @@ fn sstart(_hartid: u64, device_tree_blob: u64) {
 
     unsafe {
         // Read and process host FDT.
-        println!("dtb={:#x}", device_tree_blob);
         let fdt = Fdt::new(device_tree_blob);
         assert!(fdt.magic_valid());
         assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
@@ -151,6 +151,29 @@ fn sstart(_hartid: u64, device_tree_blob: u64) {
                         fdt.total_size() as usize);
         let fdt = Fdt::new(pmap::MPA.address_to_pointer::<u8>(guest_dtb) as u64);
         fdt.process();
+
+        for i in 1..127 { // priority
+            *((0xc000000 + i*4) as *mut u32) = 1;
+        }
+        // for i in 0..4 { // Hart 0 M-mode enables
+        //     *((0xc002000 + i*4) as *mut u32) = !0;
+        // }
+
+        *((0xc002080) as *mut u32) = 0xfffffffe;
+        *((0xc002084) as *mut u32) = !0;
+        *((0xc002088) as *mut u32) = !0;
+        *((0xc00208c) as *mut u32) = !0;
+
+        // *(0xc200000 as *mut u32) = 0; // Hart 0 M-mode threshold
+        *(0xc201000 as *mut u32) = 0; // Hart 0 S-mode threshold
+
+        // for i in 1..=8 {
+        //     let addr = 0x10000000 + 0x1000 * i;
+        //     println!("ADDR = {:#x}", addr);
+        //     println!("  magic={:#x}", *(addr as *const u32));
+        //     println!("  version={:#x}", *((addr+4) as *const u32));
+        //     println!("  type={:#x}", *((addr+8) as *const u32));
+        // }
 
         // Jump into the guest kernel.
         //
