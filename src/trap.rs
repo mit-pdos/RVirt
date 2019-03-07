@@ -1,6 +1,6 @@
 use spin::Mutex;
 use riscv_decode::Instruction;
-use crate::{csr, pfault, pmap, print};
+use crate::{csr, pfault, pmap, print, virtio};
 use crate::plic::PlicState;
 
 #[allow(unused)]
@@ -196,6 +196,10 @@ pub struct ShadowState {
 
     pub uart_dlab: bool,
     pub plic: PlicState,
+
+    pub virtio_devices: [virtio::Device; virtio::MAX_DEVICES],
+    pub virtio_queue_guest_pages: [u64; virtio::MAX_DEVICES * virtio::MAX_QUEUES],
+    pub num_virtio_queue_guest_pages: usize,
 }
 impl ShadowState {
     pub const fn new() -> Self {
@@ -217,6 +221,9 @@ impl ShadowState {
             uart_dlab: false,
 
             plic: PlicState::new(),
+            virtio_devices: [virtio::Device::new(); virtio::MAX_DEVICES],
+            virtio_queue_guest_pages: [0; virtio::MAX_DEVICES * virtio::MAX_QUEUES],
+            num_virtio_queue_guest_pages: 0,
         }
     }
     pub fn push_sie(&mut self) {
@@ -325,7 +332,6 @@ pub unsafe fn strap() -> u64 {
         // } else {
         //     cause
         // };
-        csrw!(sip, 0);
         // state.sip = state.sip | (1 << (cause & 0xff));
         // println!("Got interrupt at pc={:#x}, smode={}, spp={}", csrr!(sepc), state.smode, state.sstatus.get(STATUS_SPP));
         handle_interrupt(&mut state, cause, csrr!(sepc));
@@ -421,6 +427,8 @@ fn handle_interrupt(state: &mut ShadowState, cause: u64, sepc: u64) {
     if cause & 0xff != 5 {
         println!(">>>>>>>>>>>>>>>>> Interrupt with cause = {} >>>>>>>>>>>>>>>>>", cause & 0xff);
     }
+
+    csrc!(sip, 1 << (cause & 0xff));
     if (!state.smode || enabled) && unmasked {
         // println!("||> Forwarding timer interrupt! (state.smode={}, sepc={:#x})", state.smode, sepc);
         // forward interrupt
@@ -484,5 +492,5 @@ pub unsafe fn decode_instruction_at_address(state: &mut ShadowState, guest_va: u
         4 => il as u32 | ((*pc_ptr.offset(1) as u32) << 16),
         _ => unreachable!(),
     };
-    (instruction, riscv_decode::try_decode(instruction), len as u64)
+    (instruction, riscv_decode::decode(instruction).ok(), len as u64)
 }

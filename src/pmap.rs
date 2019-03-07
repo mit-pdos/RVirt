@@ -9,7 +9,7 @@ const PAGE_SIZE: u64 = 4096;
 
 const PAGE_TABLE_SHIFT: u32 = 9;
 
-static mut MAX_GUEST_PHYSICAL_ADDRESS: u64 = 0;
+pub static mut MAX_GUEST_PHYSICAL_ADDRESS: u64 = 0;
 
 pub const SV39_MASK: u64 = !((!0) << 39);
 
@@ -126,7 +126,7 @@ impl IndexMut<u64> for PageTableRoot {
     }
 }
 
-fn pa2va(pa: u64) -> u64 { pa + HPA_OFFSET }
+pub fn pa2va(pa: u64) -> u64 { pa + HPA_OFFSET }
 fn va2pa(va: u64) -> u64 {
      // Must be in HPA region.
     assert!(va >= HPA_OFFSET);
@@ -138,7 +138,7 @@ pub fn mpa2pa(mpa: u64) -> Option<u64> {
         return Some(mpa + fdt::VM_RESERVATION_SIZE as u64);
     }
 
-    if mpa < 0x10001000 { // DEBUG, MROM, TEST, CLINT, PLIC, and UART0 inaccessible
+    if mpa < 0x30000000 { // DEBUG, MROM, TEST, CLINT, PLIC, and UART0 inaccessible
         None
     } else if mpa < 0x80000000 { // VIRTIO and PCIe accessible
         Some(mpa)
@@ -177,11 +177,17 @@ fn alloc_page() -> *mut Page {
     let free = free_list.take();
     let next = free.as_ref().expect("Out of Hypervisor Memory").0;
     *free_list = next;
-    free.unwrap() as *const FreePage as *mut Page
+    let page = free.unwrap() as *const FreePage as *mut Page;
+
+    let mut addr = page as u64;
+    while addr < page as u64 + 4096 {
+        unsafe { *(addr as *mut u64) = 0 };
+        addr += 8;
+    }
+
+    page
 }
 fn free_page(page: *mut Page) {
-    // TODO: Why does this fail?
-    // unsafe { ptr::write_bytes(page, 0, PAGE_SIZE as usize); }
     let mut free_list = FREE_LIST.lock();
     let mut free_page: &mut FreePage = unsafe { &mut *(page as *mut FreePage) };
     free_page.0 = free_list.take();
@@ -394,12 +400,20 @@ pub fn print_guest_page_table(pt: u64, level: u8, base: u64) {
     }
 }
 
-pub fn handle_sfence_vma(_state: &mut ShadowState, _instruction: Instruction) {
-    // TODO: Don't always to global fence
+pub fn flush_shadow_page_table() {
     unsafe {
         clear_page_table(UVA.pa());
         clear_page_table(KVA.pa());
         clear_page_table(MVA.pa());
+
+        UVA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
+        KVA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
+        MVA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
+
         asm!("sfence.vma" :::: "volatile");
     }
+}
+
+pub fn handle_sfence_vma(_state: &mut ShadowState, _instruction: Instruction) {
+    flush_shadow_page_table();
 }

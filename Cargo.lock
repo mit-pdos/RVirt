@@ -2,8 +2,8 @@
 # It is not intended for manual editing.
 [[package]]
 name = "riscv-decode"
-version = "0.1.0"
-source = "git+https://github.com/fintelia/riscv-decode.git#fa095efa9bc00fe7fc61f5342db3526a98584c86"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "spin"
@@ -14,10 +14,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "svpn"
 version = "0.1.0"
 dependencies = [
- "riscv-decode 0.1.0 (git+https://github.com/fintelia/riscv-decode.git)",
+ "riscv-decode 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "spin 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [metadata]
-"checksum riscv-decode 0.1.0 (git+https://github.com/fintelia/riscv-decode.git)" = "<none>"
+"checksum riscv-decode 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "920466101a1ec4ffac2ab9b72fa780eff62defa0ae9c4f77a07fa41dfd5450e6"
 "checksum spin 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = "44363f6f51401c34e7be73db0db371c04705d35efbe9f7d6082e03a921a32c55"

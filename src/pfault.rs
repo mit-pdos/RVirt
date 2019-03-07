@@ -1,6 +1,6 @@
 use crate::pmap::*;
 use crate::trap::{self, ShadowState, constants::SATP_PPN};
-use crate::print;
+use crate::{print, virtio};
 use riscv_decode::Instruction;
 
 /// Perform any handling required in response to a guest page fault. Returns true if the fault could
@@ -55,25 +55,44 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: u64, pc: u64) ->
                 (guest_pte & (PTE_READ | PTE_WRITE | PTE_EXECUTE))
             };
 
+            if virtio::is_queue_access(state, translation.guest_pa) {
+                let guest_pa = (translation.guest_pa & !0xfff) | (guest_va & 0xfff);
+                let host_pa = (host_pa & !0xfff) | (guest_va & 0xfff);
+                return virtio::handle_queue_access(state, guest_pa, host_pa, pc);
+            }
+
             *shadow.get_pte(page) = (host_pa >> 2) | perm | PTE_AD | PTE_USER | PTE_VALID;
             return true;
-        } else if translation.guest_pa >= 0x10000000 && translation.guest_pa < 0x10000100 && access != PTE_EXECUTE && state.smode {
-            return handle_uart_access(state, (translation.guest_pa & !0xfff) | (guest_va & 0xfff), pc);
-        } else if translation.guest_pa >= 0x0c000000 && translation.guest_pa < 0x10000000 && access != PTE_EXECUTE && state.smode {
-            return handle_plic_access(state, (translation.guest_pa & !0xfff) | (guest_va & 0xfff), pc);
-        } else {
-            println!("Guest page table specified invalid guest address, va={:#x} pa={:#x}", guest_va, translation.guest_pa);
-            return false;
+        } else if access != PTE_EXECUTE && state.smode {
+            let pa = (translation.guest_pa & !0xfff) | (guest_va & 0xfff);
+
+            if is_uart_access(pa) {
+                return handle_uart_access(state, pa, pc);
+            }
+
+            if is_plic_access(pa) {
+                return handle_plic_access(state, pa, pc)
+            }
+
+            if virtio::is_device_access(pa) {
+                return virtio::handle_device_access(state, pa, pc);
+            }
         }
+
+        println!("Guest page table specified invalid guest address, va={:#x} pa={:#x}",
+                 guest_va, translation.guest_pa);
+        return false;
     } else {
-        // println!("satp: {:#x}", state.satp);
         println!("forwarding page fault: \n sepc = {:#x}, stval = {:#x}, stvec = {:#x}",
                  csrr!(sepc) & SV39_MASK, guest_va & SV39_MASK, state.stvec);
-        // print_guest_page_table(((state.satp & SATP_PPN)) << 12, 2, 0);
         return false;
     }
 }
 
+#[inline(always)]
+fn is_uart_access(guest_pa: u64) -> bool {
+    guest_pa >= 0x10000000 && guest_pa < 0x10000100
+}
 unsafe fn handle_uart_access(state: &mut ShadowState, guest_pa: u64, pc: u64) -> bool {
     let (_instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
     match decoded {
@@ -122,6 +141,10 @@ fn uart_write(state: &mut ShadowState, addr: u64, value: u8) {
     }
 }
 
+#[inline(always)]
+fn is_plic_access(guest_pa: u64) -> bool {
+    guest_pa >= 0x0c000000 && guest_pa < 0x10000000
+}
 unsafe fn handle_plic_access(state: &mut ShadowState, guest_pa: u64, pc: u64) -> bool {
     let (instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
     match decoded {
@@ -131,7 +154,7 @@ unsafe fn handle_plic_access(state: &mut ShadowState, guest_pa: u64, pc: u64) ->
             trap::set_register(i.rd(), value)
         }
         Some(Instruction::Sw(i)) => {
-            let value = (trap::get_register(i.rs2()) & 0xff) as u32;
+            let value = trap::get_register(i.rs2()) as u32;
             println!("PLIC: Writing {:#x} to address {:#x}", value, guest_pa);
             state.plic.write_u32(guest_pa, value)
         }
