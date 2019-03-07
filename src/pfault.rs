@@ -117,7 +117,11 @@ fn uart_read(state: &mut ShadowState, addr: u64) -> u8 {
     match (state.uart_dlab, addr) {
         (false, 0x10000000) => 0,
         (false, 0x10000001) => 0, // Interrupt enable (top four should always be zero)
-        (_, 0x10000002) => 0xc0, // Interrupt identification
+        (_, 0x10000002) => { // Interrupt identification
+            let r = 0xc0 | state.uart_interrupt_id;
+            state.uart_interrupt_id = 0;
+            r
+        },
         (true, 0x10000003) => 0x03,
         (false, 0x10000003) => 0x83,
         (_, 0x10000005) => 0x30, // TODO: Change if data ready
@@ -130,10 +134,15 @@ fn uart_read(state: &mut ShadowState, addr: u64) -> u8 {
 }
 fn uart_write(state: &mut ShadowState, addr: u64, value: u8) {
     match (state.uart_dlab, addr, value) {
-        (false, 0x10000000, _) => print::guest_putchar(value),
+        (false, 0x10000000, _) => {
+            print::guest_putchar(value);
+            if state.uart_interrupt_enable & 0x2 != 0 {
+                state.uart_interrupt_id |= 0x2;
+                state.plic.set_pending(10, true);
+            }
+        }
         (true, 0x10000000, _) => {} // DLL divisor latch LSB
-        (false, 0x10000001, 0) => {} // disable interrupts
-        (false, 0x10000001, _) => {} // TODO: actually trigger some interrupts as requested
+        (false, 0x10000001, _) => state.uart_interrupt_enable = value,
         (true, 0x10000001, _) => {} // DLM divisor latch MSB
         (_, 0x10000002, _) => {} // FIFO control
         (_, 0x10000003, _) => state.uart_dlab = (value & 0x80) != 0,

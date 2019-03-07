@@ -197,6 +197,9 @@ pub struct ShadowState {
     pub smode: bool,
 
     pub uart_dlab: bool,
+    pub uart_interrupt_enable: u8,
+    pub uart_interrupt_id: u8,
+
     pub plic: PlicState,
 
     pub virtio_devices: [virtio::Device; virtio::MAX_DEVICES],
@@ -224,6 +227,8 @@ impl ShadowState {
             smode: true,
 
             uart_dlab: false,
+            uart_interrupt_enable: 0,
+            uart_interrupt_id: 0,
 
             plic: PlicState::new(),
             virtio_devices: [virtio::Device::new(); virtio::MAX_DEVICES],
@@ -424,7 +429,7 @@ pub unsafe fn strap() -> u64 {
         match get_register(17) {
             0 => {
                 state.sip.set(IP_STIP, false);
-                state.mtimecmp = get_mtime() + get_register(10)*100;
+                state.mtimecmp = get_mtime() + get_register(10);
                 set_mtimecmp0(state.mtimecmp);
             }
             1 => print::guest_putchar(get_register(10) as u8),
