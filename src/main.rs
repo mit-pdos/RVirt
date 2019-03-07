@@ -128,6 +128,11 @@ fn sstart(_hartid: u64, device_tree_blob: u64) {
 
         // Initialize memory subsystem.
         pmap::init(&machine);
+        asm!("li t0, 0x40000000
+              sub sp, sp, t0" ::: "t0" : "volatile");
+        pmap::init2();
+
+        let fdt = Fdt::new(pmap::pa2va(device_tree_blob));
 
         // Load guest binary
         let entry;
@@ -152,7 +157,7 @@ fn sstart(_hartid: u64, device_tree_blob: u64) {
         fdt.process();
 
         for i in 1..127 { // priority
-            *((0xc000000 + i*4) as *mut u32) = 1;
+            *(pmap::pa2va(0xc000000 + i*4) as *mut u32) = 1;
         }
         // *((0xc000000 + 7*4) as *mut u32) = 1;
         // *((0xc000000 + 10*4) as *mut u32) = 3;
@@ -160,10 +165,10 @@ fn sstart(_hartid: u64, device_tree_blob: u64) {
         //     *((0xc002000 + i*4) as *mut u32) = !0;
         // }
 
-        *((0xc002080) as *mut u32) = 0xfffffffe;
-        *((0xc002084) as *mut u32) = !0;
-        *((0xc002088) as *mut u32) = !0;
-        *((0xc00208c) as *mut u32) = !0;
+        *(pmap::pa2va(0xc002080) as *mut u32) = 0xfffffffe;
+        *(pmap::pa2va(0xc002084) as *mut u32) = !0;
+        *(pmap::pa2va(0xc002088) as *mut u32) = !0;
+        *(pmap::pa2va(0xc00208c) as *mut u32) = !0;
 
         // *((0xc002080) as *mut u32) = 0x80;
         // *((0xc002084) as *mut u32) = 0;
@@ -171,7 +176,7 @@ fn sstart(_hartid: u64, device_tree_blob: u64) {
         // *((0xc00208c) as *mut u32) = 0;
 
         // *(0x0c200000 as *mut u32) = 0; // Hart 0 M-mode threshold
-        *(0x0c201000 as *mut u32) = 0; // Hart 0 S-mode threshold
+        *(pmap::pa2va(0x0c201000) as *mut u32) = 0; // Hart 0 S-mode threshold
         // *(0x0c202000 as *mut u32) = 0; // Hart 0 S-mode threshold
         // *(0x0c203000 as *mut u32) = 0; // Hart 0 S-mode threshold
         // asm!("fence" :::: "volatile");

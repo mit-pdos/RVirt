@@ -5,7 +5,7 @@ use spin::Mutex;
 pub mod uart {
     use core::ptr;
 
-    const UART: *mut u8 = 0x10000000 as *mut u8;
+    pub static mut UART: *mut u8 = 0x10000000 as *mut u8;
     pub fn enable() {
         unsafe { ptr::write_volatile(UART.offset(1), 0x00) }
         unsafe { ptr::write_volatile(UART.offset(3), 0x80) }

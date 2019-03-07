@@ -45,8 +45,7 @@ pub mod constants {
     pub const SATP_ASID: u64 = 0xffff << 44;
     pub const SATP_PPN: u64 = 0xfff_ffffffff;
 
-    pub const MSTACK_BASE: u64 = 0x80300000 - 16*8;
-    pub const SSTACK_BASE: u64 = 0x80400000 - 32*8;
+    pub const SSTACK_BASE: u64 = 0x40400000 - 32*8;
 }
 use self::constants::*;
 
@@ -93,7 +92,7 @@ pub unsafe fn strap_entry() -> ! {
           csrw 0x180, sp
 
           // Set stack pointer
-          li sp, 0x80400000
+          li sp, 0x40400000
           addi sp, sp, -32*8
 
           // Save registers
@@ -564,10 +563,10 @@ pub fn get_register(reg: u32) -> u64 {
 }
 
 fn get_mtime() -> u64 {
-    unsafe { *((CLINT_ADDRESS + CLINT_MTIME_OFFSET) as *const u64) }
+    unsafe { *(pmap::pa2va(CLINT_ADDRESS + CLINT_MTIME_OFFSET) as *const u64) }
 }
 fn set_mtimecmp0(value: u64) {
-    unsafe { *((CLINT_ADDRESS + CLINT_MTIMECMP0_OFFSET) as *mut u64) = value; }
+    unsafe { *(pmap::pa2va(CLINT_ADDRESS + CLINT_MTIMECMP0_OFFSET) as *mut u64) = value; }
 }
 
 pub unsafe fn decode_instruction_at_address(state: &mut ShadowState, guest_va: u64) -> (u32, Option<Instruction>, u64) {

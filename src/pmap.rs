@@ -302,13 +302,14 @@ pub fn init(machine: &MachineMeta) {
         *((ROOT.pa() + 0x20) as *mut u64) = (MVA.pa() >> 2) | PTE_VALID;
         *((ROOT.pa() + 0x28) as *mut u64) = (MPA.pa() >> 2) | PTE_VALID;
 
-        *((HVA.pa() + 0x00) as *mut u64) = 0x00000000 | PTE_AD | PTE_RWXV;
         *((HVA.pa() + 0x08) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
         *((HVA.pa() + 0x10) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
-        *((HVA.pa() + 0x18) as *mut u64) = 0x30000000 | PTE_AD | PTE_RWXV;
 
         csrw!(satp, ROOT.satp());
-        asm!("sfence.vma" ::: "memory" : "volatile");
+        asm!("sfence.vma"
+             ::: "memory" : "volatile");
+
+        crate::print::uart::UART = crate::print::uart::UART.offset(HPA_OFFSET as isize);
 
         assert_eq!(machine.gpm_offset, 0x80000000);
         MAX_GUEST_PHYSICAL_ADDRESS = machine.gpm_offset + machine.gpm_size;
@@ -318,9 +319,7 @@ pub fn init(machine: &MachineMeta) {
             free_page(pa2va(addr) as *mut Page);
             addr += PAGE_SIZE;
         }
-    }
 
-    unsafe {
         map_region(MPA.offset() + 0x80000000,
                    machine.guest_shift + 0x80000000,
                    machine.gpm_size,
@@ -328,7 +327,6 @@ pub fn init(machine: &MachineMeta) {
     }
 
     // Map hypervisor into all address spaces at same location.
-    // TODO: Make sure this address in compatible with Linux.
     ROOT[511] = (HVA.pa() >> 2) | PTE_VALID;
     HVA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
     UVA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
@@ -336,8 +334,11 @@ pub fn init(machine: &MachineMeta) {
     MVA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
     MPA[511] = 0x20000000 | PTE_AD | PTE_RWXV;
 
-
     csrs!(sstatus, crate::trap::constants::STATUS_SUM);
+}
+
+pub fn init2() {
+    HVA[2] = 0;
 }
 
 #[allow(unused)]
