@@ -235,7 +235,7 @@ pub struct AddressTranslation {
 
 // Returns the guest physical address associated with a given guest virtual address, by walking
 // guest page tables.
-pub fn translate_guest_address(root_page_table: u64, addr: u64, _access_type: AccessType) -> Option<AddressTranslation> {
+pub fn translate_guest_address(root_page_table: u64, addr: u64) -> Option<AddressTranslation> {
     if !is_sv39(addr) {
         return None;
     }
@@ -387,7 +387,7 @@ pub fn print_guest_page_table(pt: u64, level: u8, base: u64) {
                 } else {
                     println!("{:#x}: {:#x}", addr, pte);
                     print_guest_page_table(child, level - 1, addr);
-                    break;
+                    //break;
                 }
             } else if pte & PTE_VALID != 0 {
                 println!("{:#x} -> {:#x}", addr, (pte >> 10) << 12);
@@ -416,4 +416,5 @@ pub fn flush_shadow_page_table() {
 
 pub fn handle_sfence_vma(_state: &mut ShadowState, _instruction: Instruction) {
     flush_shadow_page_table();
+    // println!("sfence.vma");
 }

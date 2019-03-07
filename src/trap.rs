@@ -61,9 +61,11 @@ trait U64Bits {
     fn set(&mut self, mask: Self, value: bool);
 }
 impl U64Bits for u64 {
+    #[inline(always)]
     fn get(&self, mask: Self) -> bool {
         *self & mask != 0
     }
+    #[inline(always)]
     fn set(&mut self, mask: Self, value: bool) {
         if value {
             *self |= mask;
@@ -200,6 +202,9 @@ pub struct ShadowState {
     pub virtio_devices: [virtio::Device; virtio::MAX_DEVICES],
     pub virtio_queue_guest_pages: [u64; virtio::MAX_DEVICES * virtio::MAX_QUEUES],
     pub num_virtio_queue_guest_pages: usize,
+
+    // If set, hypervisor exits do not need to check for pending interrupts
+    pub no_interrupt: bool,
 }
 impl ShadowState {
     pub const fn new() -> Self {
@@ -224,6 +229,8 @@ impl ShadowState {
             virtio_devices: [virtio::Device::new(); virtio::MAX_DEVICES],
             virtio_queue_guest_pages: [0; virtio::MAX_DEVICES * virtio::MAX_QUEUES],
             num_virtio_queue_guest_pages: 0,
+
+            no_interrupt: true,
         }
     }
     pub fn push_sie(&mut self) {
@@ -231,6 +238,10 @@ impl ShadowState {
         self.sstatus.set(STATUS_SIE, false);
     }
     pub fn pop_sie(&mut self) {
+        if !self.sstatus.get(STATUS_SIE) && self.sstatus.get(STATUS_SPIE) {
+            self.no_interrupt = false;
+        }
+
         self.sstatus.set(STATUS_SIE, self.sstatus.get(STATUS_SPIE));
         self.sstatus.set(STATUS_SPIE, true);
     }
@@ -271,22 +282,40 @@ impl ShadowState {
                     unimplemented!("STATUS.MXR");
                 }
                 if changed & STATUS_FS != 0 {
-                    unimplemented!("STATUS.FS");
+                    csrw!(sstatus, value & STATUS_FS | (csrr!(sstatus) & !STATUS_FS));
+                }
+
+                if changed.get(STATUS_SIE) && value.get(STATUS_SIE) {
+                    // Enabling interrupts might cause one to happen right away.
+                    self.no_interrupt = false;
                 }
             }
             csr::satp => {
                 let mode = (value & SATP_MODE) >> 60;
                 if mode == 0 || mode == 8 {
                     self.satp = value & !SATP_ASID;
+                } else {
+                    println!("Attempted to install page table with unsupported mode");
                 }
             }
-            csr::sie => self.sie = value & (IE_SEIE | IE_STIE | IE_SSIE),
+            csr::sie => {
+                let value = value & (IE_SEIE | IE_STIE | IE_SSIE);
+                if !self.sie & value != 0 {
+                    self.no_interrupt = false;
+                }
+                self.sie = value;
+            }
             csr::stvec => self.stvec = value & !0x2,
             csr::sscratch => self.sscratch = value,
             csr::sepc => self.sepc = value,
             csr::scause => self.scause = value,
             csr::stval => self.stval = value,
-            csr::sip => self.sip = (self.sip & !IP_SSIP) | (value & IP_SSIP),
+            csr::sip => {
+                if value & IP_SSIP != 0 {
+                    self.no_interrupt = false;
+                }
+                self.sip = (self.sip & !IP_SSIP) | (value & IP_SSIP)
+            }
             csr::sedeleg |
             csr::sideleg |
             csr::scounteren => {}
@@ -325,19 +354,13 @@ pub unsafe fn strap() -> u64 {
 
     let mut state = SHADOW_STATE.lock();
     if (cause as isize) < 0 {
-        // let cause = if cause & 0xff == 1 {
-        //     // Treat software interrupts as timer interrupts so we can reset them without an SBI
-        //     // call.
-        //     0x8000000000000005
-        // } else {
-        //     cause
-        // };
-        // state.sip = state.sip | (1 << (cause & 0xff));
-        // println!("Got interrupt at pc={:#x}, smode={}, spp={}", csrr!(sepc), state.smode, state.sstatus.get(STATUS_SPP));
-        handle_interrupt(&mut state, cause, csrr!(sepc));
+        handle_interrupt(&mut state, cause);
+        maybe_forward_interrupt(&mut state, csrr!(sepc));
     } else if cause == 12 || cause == 13 || cause == 15 {
         let pc = csrr!(sepc);
-        if !pfault::handle_page_fault(&mut state, cause, pc) {
+        if pfault::handle_page_fault(&mut state, cause, pc) {
+            maybe_forward_interrupt(&mut state, pc);
+        } else {
             forward_exception(&mut state, cause, pc);
         }
     } else if cause == 2 && state.smode {
@@ -351,13 +374,10 @@ pub unsafe fn strap() -> u64 {
                 state.sstatus.set(STATUS_SPP, false);
                 csrw!(sepc, state.sepc);
                 advance_pc = false;
-                // if state.sip.get(IP_SSIP) {
-                //     println!("Software interupt?");
-                //     handle_interrupt(&mut state, 0x8000000000000001, csrr!(sepc));
-                // } else if state.sip.get(IP_STIP) {
-                //     println!("Timer interupt?");
-                //     handle_interrupt(&mut state, 0x8000000000000005, csrr!(sepc));
-                // }
+
+                if !state.smode {
+                    state.no_interrupt = false;
+                }
             }
             Some(fence @ Instruction::SfenceVma(_)) => pmap::handle_sfence_vma(&mut state, fence),
             Some(Instruction::Csrrw(i)) => if let Some(prev) = state.get_csr(i.csr()) {
@@ -395,9 +415,11 @@ pub unsafe fn strap() -> u64 {
                 advance_pc = false;
             }
         }
+
         if advance_pc {
             csrw!(sepc, pc + len);
         }
+        maybe_forward_interrupt(&mut state, csrr!(sepc));
     } else if cause == 8 && state.smode {
         match get_register(17) {
             0 => {
@@ -406,6 +428,9 @@ pub unsafe fn strap() -> u64 {
                 set_mtimecmp0(state.mtimecmp);
             }
             1 => print::guest_putchar(get_register(10) as u8),
+            5 => asm!("fence.i" :::: "volatile"),
+            6 | 7 => pmap::handle_sfence_vma(&mut state,
+                                             Instruction::SfenceVma(riscv_decode::types::RType(0)) /* TODO */),
             i => {
                 println!("Got ecall from guest function={}!", i);
                 loop {}
@@ -413,37 +438,95 @@ pub unsafe fn strap() -> u64 {
         }
         csrw!(sepc, csrr!(sepc) + 4);
     } else {
-        println!("Forward exception (cause = {}, smode={})!", cause, state.smode);
+        if cause != 8 { // no need to print anything for guest syscalls...
+            println!("Forward exception (cause = {}, smode={})!", cause, state.smode);
+        }
         forward_exception(&mut state, cause, csrr!(sepc));
     }
 
     state.shadow().satp()
 }
 
-fn handle_interrupt(state: &mut ShadowState, cause: u64, sepc: u64) {
-    let enabled = state.sstatus.get(STATUS_SIE);
-    let unmasked = state.sie & (1 << (cause & 0xff)) != 0;
+fn handle_interrupt(state: &mut ShadowState, cause: u64) {
+    let interrupt = cause & 0xff;
 
-    if cause & 0xff != 5 {
-        println!(">>>>>>>>>>>>>>>>> Interrupt with cause = {} >>>>>>>>>>>>>>>>>", cause & 0xff);
+    match interrupt {
+        0x1 => {
+            // Software
+            unimplemented!();
+        }
+        0x5 => {
+            // Timer
+            csrc!(sip, 1 << interrupt);
+            assert_eq!(csrr!(sip) & (1 << interrupt), 0);
+
+            if state.mtimecmp <= get_mtime() {
+                state.sip |= IP_STIP;
+                state.no_interrupt = false;
+            } else {
+                set_mtimecmp0(state.mtimecmp);
+            }
+        }
+        0x9 => unsafe {
+            // External
+            let claim = *(pmap::pa2va(0x0c201004) as *mut u32);
+            asm!("" :::: "volatile");
+            *(pmap::pa2va(0x0c201004) as *mut u32) = claim;
+            state.plic.set_pending(claim, true);
+
+            // Guest might have masked out this interrupt
+            if state.plic.interrupt_pending() {
+                state.no_interrupt = false;
+                state.sip |= IP_SEIP;
+            } else {
+                assert_eq!(state.sip & IP_SEIP, 0);
+                println!("Guest masked external interrupt");
+            }
+
+        }
+        i => {
+            println!("Got interrupt #{}", i);
+            unreachable!()
+        }
+    }
+}
+
+fn maybe_forward_interrupt(state: &mut ShadowState, sepc: u64) {
+    if state.no_interrupt {
+        return;
     }
 
-    csrc!(sip, 1 << (cause & 0xff));
-    if (!state.smode || enabled) && unmasked {
+    if !state.sip.get(IP_SEIP) && state.plic.interrupt_pending() {
+        state.sip.set(IP_SEIP, true);
+    }
+
+    if (!state.smode || state.sstatus.get(STATUS_SIE)) && (state.sie & state.sip != 0) {
+        let cause = if state.sip.get(IP_SEIP) {
+            9
+        } else if state.sip.get(IP_STIP) {
+            5
+        } else if state.sip.get(IP_SSIP) {
+            1
+        } else {
+            unreachable!()
+        };
+
         // println!("||> Forwarding timer interrupt! (state.smode={}, sepc={:#x})", state.smode, sepc);
         // forward interrupt
         state.push_sie();
         state.sepc = sepc;
-        state.scause = cause;
+        state.scause = (1 << 63) | cause;
         state.sstatus.set(STATUS_SPP, state.smode);
         state.stval = 0;
         state.smode = true;
 
         match state.stvec & TVEC_MODE {
             0 => csrw!(sepc, state.stvec & TVEC_BASE),
-            1 => csrw!(sepc, (state.stvec & TVEC_BASE) + 4 * cause & 0xff),
+            1 => csrw!(sepc, (state.stvec & TVEC_BASE) + 4 * cause),
             _ => unreachable!(),
         }
+    } else {
+        state.no_interrupt = true;
     }
 }
 

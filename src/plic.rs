@@ -37,12 +37,32 @@ impl PlicState {
                 0
             }
         } else if offset >= 0x200000 && offset < 0x200000 + 0x1000 * MAX_HARTS as u64 {
-            let hart = (offset - 0x200000) / 0x1000;
+            let hart = ((offset - 0x200000) / 0x1000) as usize;
             let index = ((offset - 0x200000) & 0xfff) >> 2;
             if index == 0 {
-                self.thresholds[hart as usize]
+                self.thresholds[hart]
             } else if index == 1 {
-                self.claim_complete[hart as usize]
+                if self.claim_complete[hart] == 0 {
+                    let threshold = self.thresholds[hart];
+                    let mut max_priority = threshold;
+                    for i in 0..self.pending.len() {
+                        if self.pending[i] == 0 {
+                            continue;
+                        }
+
+                        for j in 0..32 {
+                            if self.pending[i] & (1 << j) != 0 {
+                                let interrupt = i*32 + j;
+                                if self.source_priority[interrupt] > max_priority {
+                                    max_priority = self.source_priority[interrupt];
+                                    self.claim_complete[hart] = interrupt as u32;
+                                }
+                            }
+                        }
+                    }
+                }
+                self.set_pending(self.claim_complete[hart], false);
+                self.claim_complete[hart]
             } else {
                 0
             }
@@ -51,7 +71,7 @@ impl PlicState {
         }
     }
 
-    pub fn write_u32(&mut self, addr: u64, value: u32) {
+    pub fn write_u32(&mut self, addr: u64, value: u32, clear_seip: &mut bool) {
         let offset = addr.wrapping_sub(self.base);
         if offset <= 0x800 {
             self.source_priority[offset as usize >> 2] = value;
@@ -70,10 +90,43 @@ impl PlicState {
                 self.thresholds[hart as usize] = value;
             } else if index == 1 {
                 if self.claim_complete[hart as usize] == value {
-                    // TODO
+                    self.set_pending(value, false);
                     self.claim_complete[hart as usize] = 0;
+                    *clear_seip = true;
                 }
             }
         }
+    }
+
+    pub fn set_pending(&mut self, interrupt: u32, value: bool) {
+        let index = (interrupt / 32) as usize;
+        let mask = 1 << (interrupt % 32);
+
+        if value {
+            self.pending[index] |= mask;
+        } else {
+            self.pending[index] &= !mask;
+        }
+    }
+
+    pub fn interrupt_pending(&self) -> bool {
+        const HART: usize = 0; // TODO: shouldn't be constant
+
+        let threshold = self.thresholds[HART];
+        for i in 0..self.pending.len() {
+            if self.pending[i] == 0 {
+                continue;
+            }
+
+            for j in 0..32 {
+                if self.pending[i] & (1 << j) != 0 {
+                    if self.source_priority[i*32 + j] > threshold {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 }

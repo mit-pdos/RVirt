@@ -23,12 +23,12 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: u64, pc: u64) ->
     };
 
     let page = guest_va & !0xfff;
-    if let Some(translation) = translate_guest_address((state.satp & SATP_PPN) << 12, page, AccessType::Read) {
+    if let Some(translation) = translate_guest_address((state.satp & SATP_PPN) << 12, page) {
         let guest_pte = *translation.pte;
 
         // Check R/W/X bits
         if guest_pte & access == 0 {
-            println!("Bad access bit guest_va={:#x}, guest_pte={:#x}, cause={}", guest_va, guest_pte, cause);
+            // println!("Bad access bit guest_va={:#x}, guest_pte={:#x}, cause={}", guest_va, guest_pte, cause);
             return false;
         }
 
@@ -83,8 +83,13 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: u64, pc: u64) ->
                  guest_va, translation.guest_pa);
         return false;
     } else {
-        println!("forwarding page fault: \n sepc = {:#x}, stval = {:#x}, stvec = {:#x}",
-                 csrr!(sepc) & SV39_MASK, guest_va & SV39_MASK, state.stvec);
+        // println!("forwarding page fault: \n sepc = {:#x}, stval = {:#x}, stvec = {:#x}",
+        //          csrr!(sepc) & SV39_MASK, guest_va & SV39_MASK, state.stvec);
+        // if !state.smode {
+        //     crate::pmap::print_guest_page_table((state.satp & SATP_PPN) << 12, 2, 0);
+        //     loop {}
+        // }
+
         return false;
     }
 }
@@ -150,13 +155,19 @@ unsafe fn handle_plic_access(state: &mut ShadowState, guest_pa: u64, pc: u64) ->
     match decoded {
         Some(Instruction::Lw(i)) => {
             let value = state.plic.read_u32(guest_pa) as i32 as i64 as u64;
-            println!("PLIC: Read value {:#x} at address {:#x}", value, guest_pa);
+            // println!("PLIC: Read value {:#x} at address {:#x}", value, guest_pa);
             trap::set_register(i.rd(), value)
         }
         Some(Instruction::Sw(i)) => {
             let value = trap::get_register(i.rs2()) as u32;
-            println!("PLIC: Writing {:#x} to address {:#x}", value, guest_pa);
-            state.plic.write_u32(guest_pa, value)
+            // println!("PLIC: Writing {:#x} to address {:#x}", value, guest_pa);
+
+            let mut clear_seip = false;
+            state.plic.write_u32(guest_pa, value, &mut clear_seip);
+            if clear_seip {
+                state.sip &= !0x200;
+            }
+            state.no_interrupt = false;
         }
         Some(instr) => {
             println!("PLIC: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, pc);
