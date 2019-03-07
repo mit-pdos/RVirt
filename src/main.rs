@@ -112,7 +112,7 @@ continue:" ::: "t0"  : "volatile");
 
     asm!("mv a0, $1
           mv a1, $0
-          mret" :: "r"(device_tree_blob), "r"(hartid) :: "volatile");
+          mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1" : "volatile");
 }
 
 fn sstart(_hartid: u64, device_tree_blob: u64) {
@@ -139,10 +139,8 @@ fn sstart(_hartid: u64, device_tree_blob: u64) {
             guest_dtb = (ret.1 | 0x1fffff) + 1;
 
         } else {
-            // TODO: proper length
-            core::ptr::copy(u_entry as *const u8, pmap::MPA.address_to_pointer(0x80000000), 0x10000);
-            entry = 0x80000000;
-            guest_dtb = 0x80000000 + 0x200000;
+            println!("No guest kernel provided. Make sure to pass one with `-initrd ...`");
+            loop {}
         }
         csrw!(sepc, entry);
 
@@ -153,24 +151,24 @@ fn sstart(_hartid: u64, device_tree_blob: u64) {
         let fdt = Fdt::new(pmap::MPA.address_to_pointer::<u8>(guest_dtb) as u64);
         fdt.process();
 
-        // for i in 1..127 { // priority
-        //     *((0xc000000 + i*4) as *mut u32) = 1;
-        // }
-        *((0xc000000 + 7*4) as *mut u32) = 1;
+        for i in 1..127 { // priority
+            *((0xc000000 + i*4) as *mut u32) = 1;
+        }
+        // *((0xc000000 + 7*4) as *mut u32) = 1;
         // *((0xc000000 + 10*4) as *mut u32) = 3;
         // for i in 0..4 { // Hart 0 M-mode enables
         //     *((0xc002000 + i*4) as *mut u32) = !0;
         // }
 
-        // *((0xc002000) as *mut u32) = 0xfffffffe;
-        // *((0xc002004) as *mut u32) = !0;
-        // *((0xc002008) as *mut u32) = !0;
-        // *((0xc00200c) as *mut u32) = !0;
+        *((0xc002080) as *mut u32) = 0xfffffffe;
+        *((0xc002084) as *mut u32) = !0;
+        *((0xc002088) as *mut u32) = !0;
+        *((0xc00208c) as *mut u32) = !0;
 
-        *((0xc002080) as *mut u32) = 0x80;
-        *((0xc002084) as *mut u32) = 0;
-        *((0xc002088) as *mut u32) = 0;
-        *((0xc00208c) as *mut u32) = 0;
+        // *((0xc002080) as *mut u32) = 0x80;
+        // *((0xc002084) as *mut u32) = 0;
+        // *((0xc002088) as *mut u32) = 0;
+        // *((0xc00208c) as *mut u32) = 0;
 
         // *(0x0c200000 as *mut u32) = 0; // Hart 0 M-mode threshold
         *(0x0c201000 as *mut u32) = 0; // Hart 0 S-mode threshold
@@ -242,22 +240,4 @@ fn sstart(_hartid: u64, device_tree_blob: u64) {
     }
 
     unreachable!();
-}
-
-#[naked]
-fn u_entry() {
-    unsafe { asm!("li sp, 0x80100000" :::: "volatile"); }
-    csrw!(sscratch, 0xdeafbeef);
-
-    // println!("000");
-    // println!("..");
-//    unsafe {
-//        asm!("ecall" :::: "volatile");
-        // asm!("ecall" :::: "volatile");
-        // asm!("ecall" :::: "volatile");
-//    }
-    // println!("111");
-    csrw!(sscratch, 0xdeafbeef);
-    // println!("222");
-    loop {}
 }
