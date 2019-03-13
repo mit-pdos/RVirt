@@ -1,6 +1,6 @@
 use crate::pmap::*;
 use crate::trap::{self, ShadowState, constants::SATP_PPN};
-use crate::{print, virtio};
+use crate::{print, sum, virtio};
 use riscv_decode::Instruction;
 
 /// Perform any handling required in response to a guest page fault. Returns true if the fault could
@@ -24,7 +24,7 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: u64, pc: u64) ->
 
     let page = guest_va & !0xfff;
     if let Some(translation) = translate_guest_address((state.satp & SATP_PPN) << 12, page) {
-        let guest_pte = *translation.pte;
+        let guest_pte = sum::access_user_memory(|| *translation.pte);
 
         // Check R/W/X bits
         if guest_pte & access == 0 {
@@ -43,13 +43,16 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: u64, pc: u64) ->
         if let Some(host_pa) = mpa2pa(translation.guest_pa) {
             // Set A and D bits
             // TODO: set bits atomically
-            if (*translation.pte & PTE_DIRTY) == 0 && access == PTE_WRITE {
-                *translation.pte = *translation.pte | PTE_DIRTY | PTE_ACCESSED;
-            } else if (*translation.pte & PTE_ACCESSED) == 0 {
-                *translation.pte = *translation.pte | PTE_ACCESSED;
-            }
+            let pte = sum::access_user_memory(|| {
+                if (*translation.pte & PTE_DIRTY) == 0 && access == PTE_WRITE {
+                    *translation.pte = *translation.pte | PTE_DIRTY | PTE_ACCESSED;
+                } else if (*translation.pte & PTE_ACCESSED) == 0 {
+                    *translation.pte = *translation.pte | PTE_ACCESSED;
+                }
+                *translation.pte
+            });
 
-            let perm = if (*translation.pte & PTE_DIRTY) == 0 && access != PTE_WRITE {
+            let perm = if (pte & PTE_DIRTY) == 0 && access != PTE_WRITE {
                 (guest_pte & (PTE_READ | PTE_EXECUTE))
             } else {
                 (guest_pte & (PTE_READ | PTE_WRITE | PTE_EXECUTE))
@@ -79,12 +82,23 @@ pub unsafe fn handle_page_fault(state: &mut ShadowState, cause: u64, pc: u64) ->
             }
         }
 
-        println!("Guest page table specified invalid guest address, va={:#x} pa={:#x}",
-                 guest_va, translation.guest_pa);
+        println!("Guest page table specified invalid guest address, va={:#x}, pa={:#x}, pc={:x}",
+                 guest_va, translation.guest_pa, csrr!(sepc));
+        println!("shadow.satp={:#x}", shadow.satp());
+        for i in 0..16 {
+            print!("x{:<2}={:16x}       ", i*2, trap::get_register(i*2));
+            println!("x{:<2}={:16x}", i*2+1, trap::get_register(i*2+1));
+        }
         return false;
     } else {
-        // println!("forwarding page fault: \n sepc = {:#x}, stval = {:#x}, stvec = {:#x}",
-        //          csrr!(sepc) & SV39_MASK, guest_va & SV39_MASK, state.stvec);
+        println!("forwarding page fault: \n sepc = {:x}, stval = {:#x}", csrr!(sepc), guest_va);
+        crate::backtrace::print_guest_backtrace(state, csrr!(sepc));
+        for i in 0..16 {
+            print!("x{:<2}={:16x}       ", i*2, trap::get_register(i*2));
+            println!("x{:<2}={:16x}", i*2+1, trap::get_register(i*2+1));
+        }
+        println!("sp={:#x}", trap::get_register(2));
+        println!("fp={:#x}", trap::get_register(8));
         // if !state.smode {
         //     crate::pmap::print_guest_page_table((state.satp & SATP_PPN) << 12, 2, 0);
         //     loop {}

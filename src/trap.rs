@@ -1,6 +1,6 @@
 use spin::Mutex;
 use riscv_decode::Instruction;
-use crate::{csr, pfault, pmap, print, virtio};
+use crate::{csr, pfault, pmap, print, sum, virtio};
 use crate::plic::PlicState;
 
 #[allow(unused)]
@@ -45,11 +45,11 @@ pub mod constants {
     pub const SATP_ASID: u64 = 0xffff << 44;
     pub const SATP_PPN: u64 = 0xfff_ffffffff;
 
-    pub const SSTACK_BASE: u64 = 0x40400000 - 32*8;
+    pub const SSTACK_BASE: u64 = 0xffffffffc0400000 - 32*8;
 }
 use self::constants::*;
 
-pub const MAX_TSTACK_ADDR: u64 = 0x80400000;
+pub const MAX_STACK_PADDR: u64 = 0x80400000;
 
 pub const CLINT_ADDRESS: u64 = 0x2000000;
 pub const CLINT_MTIMECMP0_OFFSET: u64 = 0x4000;
@@ -82,18 +82,9 @@ impl U64Bits for u64 {
 #[no_mangle]
 #[link_section = ".text.strap_entry"]
 pub unsafe fn strap_entry() -> ! {
-    const ROOT_SATP: u64 = pmap::ROOT.satp();
     asm!(".align 4
-          // Save stack pointer in sscratch
-          csrw 0x140, sp
-
-          // switch to root page table
-          li sp, $0
-          csrw 0x180, sp
-
-          // Set stack pointer
-          li sp, 0x40400000
-          addi sp, sp, -32*8
+          csrw 0x140, sp      // Save stack pointer in sscratch
+          li sp, $0           // Set stack pointer
 
           // Save registers
           sd ra, 1*8(sp)
@@ -127,12 +118,10 @@ pub unsafe fn strap_entry() -> ! {
           sd t5, 30*8(sp)
           sd t6, 31*8(sp)
 
-          jal ra, strap
+          jal ra, strap       // Call `strap`
+          li sp, $0           // Reset stack pointer, just to be safe
 
-          // Save return value
-          sd a0, 0(sp)
-
-          // Load other registers
+          // Restore registers
           ld ra, 1*8(sp)
           ld gp, 3*8(sp)
           ld tp, 4*8(sp)
@@ -164,13 +153,9 @@ pub unsafe fn strap_entry() -> ! {
           ld t5, 30*8(sp)
           ld t6, 31*8(sp)
 
-          // Load value address and use it to set SATP
-          ld sp, 0(sp)
-          csrw 0x180, sp
-
           // Restore stack pointer and return
           csrr sp, 0x140
-          sret" :: "i"(ROOT_SATP) :: "volatile");
+          sret" :: "i"(SSTACK_BASE) : "memory" : "volatile");
 
     unreachable!()
 }
@@ -345,18 +330,25 @@ impl ShadowState {
 static SHADOW_STATE: Mutex<ShadowState> = Mutex::new(ShadowState::new());
 
 #[no_mangle]
-pub unsafe fn strap() -> u64 {
+pub unsafe fn strap() {
+    let old_satp = csrr!(satp);
+    csrw!(satp, pmap::ROOT.satp());
+
     let cause = csrr!(scause);
     let status = csrr!(sstatus);
 
     if status.get(STATUS_SPP) {
         println!("Trap from within hypervisor?!");
         println!("sepc = {:#x}", csrr!(sepc));
+        println!("stval = {:#x}", csrr!(stval));
         println!("cause = {}", cause);
         loop {}
     }
 
     let mut state = SHADOW_STATE.lock();
+
+    assert_eq!(state.shadow().satp(), old_satp);
+
     if (cause as isize) < 0 {
         handle_interrupt(&mut state, cause);
         maybe_forward_interrupt(&mut state, csrr!(sepc));
@@ -378,6 +370,11 @@ pub unsafe fn strap() -> u64 {
                 state.sstatus.set(STATUS_SPP, false);
                 csrw!(sepc, state.sepc);
                 advance_pc = false;
+
+                if !state.smode {
+                    println!("Entering user mode!");
+                    crate::backtrace::print_guest_backtrace(&mut state, csrr!(sepc));
+                }
 
                 if !state.smode {
                     state.no_interrupt = false;
@@ -448,12 +445,12 @@ pub unsafe fn strap() -> u64 {
         forward_exception(&mut state, cause, csrr!(sepc));
     }
 
-    state.shadow().satp()
+    csrw!(satp, state.shadow().satp());
+//    *(SSTACK_BASE as *mut u64) = state.shadow().satp();
 }
 
 fn handle_interrupt(state: &mut ShadowState, cause: u64) {
     let interrupt = cause & 0xff;
-
     match interrupt {
         0x1 => {
             // Software
@@ -546,6 +543,11 @@ fn forward_exception(state: &mut ShadowState, cause: u64, sepc: u64) {
 }
 
 pub fn set_register(reg: u32, value: u64) {
+    assert!((value) & 0xffff != 0x9e30);
+    assert!((value >> 2) & 0xffff != 0x9e30);
+    assert!((value >> 4) & 0xffff != 0x9e30);
+    assert!((value >> 6) & 0xffff != 0x9e30);
+
     match reg {
         0 => {},
         1 | 3..=31 => unsafe { *(SSTACK_BASE as *mut u64).offset(reg as isize) = value as u64; }
@@ -571,13 +573,13 @@ fn set_mtimecmp0(value: u64) {
 
 pub unsafe fn decode_instruction_at_address(state: &mut ShadowState, guest_va: u64) -> (u32, Option<Instruction>, u64) {
     let pc_ptr = state.shadow().address_to_pointer(guest_va);
-
-    let il: u16 = *pc_ptr;
-    let len = riscv_decode::instruction_length(il);
-    let instruction = match len {
-        2 => il as u32,
-        4 => il as u32 | ((*pc_ptr.offset(1) as u32) << 16),
-        _ => unreachable!(),
-    };
+    let (len, instruction) = sum::access_user_memory(||{
+        let il: u16 = *pc_ptr;
+        match riscv_decode::instruction_length(il) {
+            2 => (2, il as u32),
+            4 => (4, il as u32 | ((*pc_ptr.offset(1) as u32) << 16)),
+            _ => unreachable!(),
+        }
+    });
     (instruction, riscv_decode::decode(instruction).ok(), len as u64)
 }

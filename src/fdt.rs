@@ -5,7 +5,7 @@ const FDT_PROP: u32 = 0x03000000;
 const FDT_NOP: u32 = 0x04000000;
 const FDT_END: u32 = 0x09000000;
 
-pub const VM_RESERVATION_SIZE: u64 = 0x4000000; // 64MB
+pub const VM_RESERVATION_SIZE: u64 = 1<<30;//0x4000000; // 64MB
 
 #[derive(Default)]
 pub struct MachineMeta {
@@ -19,8 +19,8 @@ pub struct MachineMeta {
 
     pub guest_shift: u64,
 
-    pub initrd_start: Option<u64>,
-    pub initrd_end: Option<u64>,
+    pub initrd_start: u64,
+    pub initrd_end: u64,
 }
 
 #[repr(C)]
@@ -149,6 +149,9 @@ impl Fdt {
                         println!("Property: name={}, value={:#x} ", name, prop.read_int());
                     } else if prop.len() == 0 {
                         println!("Property: name={}", name);
+                    } else if prop.len() == 16 {
+                        let range = prop.read_range();
+                        println!("Property: name={}, value={:x}:{:x} ", name, range.0, range.1);
                     } else {
                         if let Some(value) = prop.value_str() {
                             println!("Property: name={}, value=\"{}\"", name, value);
@@ -211,24 +214,25 @@ impl Fdt {
                     if indent == 2 {
                         match (device_name, prop_name) {
                             ("chosen", "linux,initrd-end") => {
-                                meta.initrd_end = Some(prop.read_int());
+                                initrd_end = Some(prop.read_int());
                                 prop.mask();
                             }
                             ("chosen", "linux,initrd-start") => {
-                                meta.initrd_start = Some(prop.read_int());
+                                initrd_start = Some(prop.read_int());
                                 prop.mask();
                             }
                             ("memory", "reg") => {
                                 // TODO: Handle multiple memory regions
                                 assert_eq!(prop.len(), 16);
+                                let region = prop.address().offset(8) as *const _ as *mut MemoryRegion;
+                                meta.hpm_offset = (*region).offset();
+                                meta.hpm_size = (*region).size();
+                                meta.gpm_offset = meta.hpm_offset;
+                                meta.gpm_size = meta.hpm_size.checked_sub(VM_RESERVATION_SIZE as u64).unwrap();
+                                assert!(meta.gpm_size > 64 * 1024 * 1024);
 
-                                let region = &mut *(prop.address().offset(8) as *const _ as *mut MemoryRegion);
-                                meta.hpm_offset = region.offset();
-                                meta.hpm_size = region.size();
-                                region.size = region.size().checked_sub(VM_RESERVATION_SIZE as u64).unwrap().swap_bytes();
-                                // region.offset = (region.offset() + VM_RESERVATION_SIZE as u64).swap_bytes();
-                                meta.gpm_offset = region.offset();
-                                meta.gpm_size = region.size();
+                                // May fail silently if FDT isn't writable
+                                (*region).size = meta.gpm_size.swap_bytes();
                             }
                             _ => {}
                         }
@@ -237,6 +241,14 @@ impl Fdt {
                 FDT_NOP | _ => ptr = ptr.offset(1),
             }
         }
+
+        if initrd_start.is_none() || initrd_end.is_none() {
+            println!("No guest kernel provided. Make sure to pass one with `-initrd ...`");
+            loop {}
+        }
+
+        meta.initrd_start = initrd_start.unwrap();
+        meta.initrd_end = initrd_end.unwrap();
 
         meta
     }
@@ -270,6 +282,13 @@ impl Property {
             8 => (*(self.address().add(8) as *const u64)).swap_bytes(),
             _ => unreachable!(),
         }
+    }
+    pub unsafe fn read_range(&self) -> (u64, u64) {
+        assert_eq!(self.len(), 16);
+        (
+            (*(self.address().add(8) as *const u64)).swap_bytes(),
+            (*(self.address().add(16) as *const u64)).swap_bytes()
+        )
     }
     pub unsafe fn mask(&self) {
         let length = (self.len() as usize + 3) / 4 + 3;

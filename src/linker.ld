@@ -12,7 +12,7 @@ SECTIONS
   /* reserve space for boot page tables */
   ASSERT(. <= 0x80010000, "")
 
-  . = 0x40200000;
+  . = 0xffffffffc0200000;
   .text : AT(0x80200000)
   {
     *(.text.strap_entry)
@@ -44,5 +44,5 @@ SECTIONS
     *(COMMON)
   }
 
-  ASSERT(. < 0x80300000, "")
+  ASSERT(. < 0xffffffffc0300000, "")
 }
