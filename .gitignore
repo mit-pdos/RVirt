@@ -2,3 +2,7 @@
 **/*.rs.bk
 *~
 */*~
+
+fedora-vmlinux
+stage4-disk.img
+vmlinux.asm
