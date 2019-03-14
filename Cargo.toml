@@ -1,8 +1,9 @@
 [package]
-name = "svpn"
+name = "rvirt"
 version = "0.1.0"
 authors = ["Jonathan Behrens <fintelia@gmail.com>"]
 edition = "2018"
+publish = false
 
 [dependencies]
 spin = "0.5.0"
