@@ -183,11 +183,14 @@ impl Fdt {
             .. Default::default()
         };
 
+        let mut mask_node = 0;
+
         let mut indent = 0;
         let mut device_name = "";
         let mut ptr = self.address().offset(self.off_dt_struct() as isize) as *const u32;
         let end = ptr.offset((self.size_dt_struct() as isize + 3) / 4);
         while ptr < end && *ptr != FDT_END {
+            let old_ptr = ptr;
             match *ptr {
                 FDT_BEGIN_NODE => {
                     indent += 1;
@@ -198,8 +201,19 @@ impl Fdt {
                     if indent == 2 {
                         device_name = name.split('@').next().unwrap_or("");
                     }
+
+                    if mask_node > 0 {
+                        mask_node += 1;
+                    } else if name.split('@').next().unwrap_or("") == "pci" {
+                        mask_node = 1;
+                    }
                 }
                 FDT_END_NODE => {
+                    if mask_node > 0 {
+                        *(ptr as *mut u32) = FDT_NOP;
+                        mask_node = mask_node - 1;
+                    }
+
                     if indent == 2 {
                         device_name = "";
                     }
@@ -239,6 +253,12 @@ impl Fdt {
                     }
                 }
                 FDT_NOP | _ => ptr = ptr.offset(1),
+            }
+
+            if mask_node > 0 {
+                for i in 0..ptr.offset_from(old_ptr) {
+                    *(old_ptr.offset(i) as *mut u32) = FDT_NOP;
+                }
             }
         }
 
