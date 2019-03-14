@@ -57,7 +57,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mepc, sstart as u64);
 
     asm!("auipc t0, 0
-          c.addi t0, 18
+          c.addi t0, 22
           csrw 0x305, t0 // mtvec
           c.j continue
 
