@@ -33,9 +33,9 @@ SVPN can currently boot a Linux guest right up until it switches away from the e
 
 - [x] Trap and emulate of privileged instructions (CSR related and SFENCE.VMA)
 - [x] Shadow page tables
-- [ ] Update PTE accessed and dirty bits
-- [ ] Timers
-- [ ] Expose and/or emulate peripherals
+- [x] Update PTE accessed and dirty bits
+- [x] Timers
+- [x] Expose and/or emulate peripherals
 
 ### Functionality
 Some features I'd like to have but not neccessary for correct virtualization of a single guest:

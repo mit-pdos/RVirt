@@ -5,7 +5,7 @@ const FDT_PROP: u32 = 0x03000000;
 const FDT_NOP: u32 = 0x04000000;
 const FDT_END: u32 = 0x09000000;
 
-pub const VM_RESERVATION_SIZE: u64 = 1<<30;//0x4000000; // 64MB
+pub const VM_RESERVATION_SIZE: u64 = 0x4000000; // 64MB
 
 #[derive(Default)]
 pub struct MachineMeta {

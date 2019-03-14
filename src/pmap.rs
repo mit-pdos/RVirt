@@ -309,7 +309,7 @@ pub fn init(machine: &MachineMeta) {
         *((HPA.pa() + 0) as *mut u64) = 0x00000000 | PTE_AD | PTE_RWXV;
         *((HPA.pa() + 0x8) as *mut u64) = 0x10000000 | PTE_AD | PTE_RWXV;
         *((HPA.pa() + 0x10) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
-        //*((HPA.pa() + 0x18) as *mut u64) = 0x30000000 | PTE_AD | PTE_RWXV;
+        *((HPA.pa() + 0x18) as *mut u64) = 0x30000000 | PTE_AD | PTE_RWXV;
 
         csrw!(satp, ROOT.satp());
         asm!("sfence.vma"

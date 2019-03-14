@@ -56,12 +56,15 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrs!(mstatus, STATUS_MPP_S);
     csrw!(mepc, sstart as u64);
 
-    asm!("auipc t0, 0
-          c.addi t0, 22
+    asm!("
+.align 4
+          auipc t0, 0
+          c.addi t0, 16
           csrw 0x305, t0 // mtvec
           c.j continue
+          c.nop
+          c.nop
 
-.align 4
 mtrap_entry:
           csrw 0x340, sp // mscratch
           li sp, 0x80300000
@@ -121,7 +124,6 @@ continue:" ::: "t0"  : "volatile");
 unsafe fn sstart(_hartid: u64, device_tree_blob: u64) {
     asm!("li t0, 0xffffffff40000000
           add sp, sp, t0" ::: "t0" : "volatile");
-    println!("Hello world!");
     csrw!(stvec, crate::trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
 

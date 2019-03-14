@@ -372,11 +372,6 @@ pub unsafe fn strap() {
                 advance_pc = false;
 
                 if !state.smode {
-                    println!("Entering user mode!");
-                    crate::backtrace::print_guest_backtrace(&mut state, csrr!(sepc));
-                }
-
-                if !state.smode {
                     state.no_interrupt = false;
                 }
             }
