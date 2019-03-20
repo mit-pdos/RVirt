@@ -1,6 +1,6 @@
 use riscv_decode::Instruction;
-use crate::trap::{self, ShadowState};
-use crate::pmap;
+use crate::context::Context;
+use crate::{trap, pmap};
 
 pub const MAX_QUEUES: usize = 4;
 pub const MAX_DEVICES: usize = 8;
@@ -35,7 +35,7 @@ pub fn is_device_access(guest_pa: u64) -> bool {
     guest_pa >= 0x10001000 && guest_pa < 0x10001000 + 0x1000 * MAX_DEVICES as u64
 }
 
-pub unsafe fn handle_device_access(state: &mut ShadowState, guest_pa: u64, pc: u64) -> bool {
+pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) -> bool {
     let device = ((guest_pa - 0x10001000) / 0x1000) as usize;
     let offset = guest_pa & 0xfff;
 
@@ -67,17 +67,17 @@ pub unsafe fn handle_device_access(state: &mut ShadowState, guest_pa: u64, pc: u
             let mut value = trap::get_register(i.rs2()) as u32;
             if offset == 0x30 { // QueueSel
                 assert!(value < 4);
-                state.virtio_devices[device].queue_sel = value;
+                state.virtio.devices[device].queue_sel = value;
             } else if offset == 0x38 { // QueueNum
-                let queue_sel = state.virtio_devices[device].queue_sel as usize;
-                let queue = &mut state.virtio_devices[device].queues[queue_sel];
+                let queue_sel = state.virtio.devices[device].queue_sel as usize;
+                let queue = &mut state.virtio.devices[device].queues[queue_sel];
                 queue.size = value as u64;
 
                 // TODO: support changing queue sizes (is this ever done?)
                 assert_eq!(queue.guest_pa, 0);
             } else if offset == 0x40 { // QueuePFN
-                let queue_sel = state.virtio_devices[device].queue_sel as usize;
-                let queue = &mut state.virtio_devices[device].queues[queue_sel];
+                let queue_sel = state.virtio.devices[device].queue_sel as usize;
+                let queue = &mut state.virtio.devices[device].queues[queue_sel];
 
                 // TODO: support releasing queues and remove this assert.
                 assert_eq!(queue.guest_pa, 0);
@@ -93,10 +93,10 @@ pub unsafe fn handle_device_access(state: &mut ShadowState, guest_pa: u64, pc: u
                 // Sad, but necessary because we don't know all the pages this page is mapped.
                 pmap::flush_shadow_page_table();
 
-                let index = state.num_virtio_queue_guest_pages;
-                assert!(index < state.virtio_queue_guest_pages.len());
-                state.virtio_queue_guest_pages[index] = queue.guest_pa;
-                state.num_virtio_queue_guest_pages += 1;
+                let index = state.virtio.num_queue_guest_pages;
+                assert!(index < state.virtio.queue_guest_pages.len());
+                state.virtio.queue_guest_pages[index] = queue.guest_pa;
+                state.virtio.num_queue_guest_pages += 1;
 
                 let va = pmap::pa2va(queue.host_pa);
                 for i in 0..queue.size {
@@ -113,8 +113,8 @@ pub unsafe fn handle_device_access(state: &mut ShadowState, guest_pa: u64, pc: u
                     // );
                 }
             // } else if offset == 0x50 {
-                // let queue_sel = state.virtio_devices[device].queue_sel as usize;
-                // let queue = &mut state.virtio_devices[device].queues[queue_sel];
+                // let queue_sel = state.virtio.devices[device].queue_sel as usize;
+                // let queue = &mut state.virtio.devices[device].queues[queue_sel];
                 // let va = pmap::pa2va(queue.host_pa);
                 // println!("VQUEUE: queue={}, host_pa={:#x}, guest_pa={:#x}",
                 //          queue_sel, queue.host_pa, queue.guest_pa);
@@ -143,18 +143,18 @@ pub unsafe fn handle_device_access(state: &mut ShadowState, guest_pa: u64, pc: u
     true
 }
 
-pub fn is_queue_access(state: &mut ShadowState, guest_page: u64) -> bool {
-    for i in 0..state.num_virtio_queue_guest_pages {
-        if state.virtio_queue_guest_pages[i] == guest_page {
+pub fn is_queue_access(state: &mut Context, guest_page: u64) -> bool {
+    for i in 0..state.virtio.num_queue_guest_pages {
+        if state.virtio.queue_guest_pages[i] == guest_page {
             return true;
         }
     }
     false
 }
 
-pub unsafe fn handle_queue_access(state: &mut ShadowState, guest_pa: u64, host_pa: u64, pc: u64) -> bool {
+pub unsafe fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u64, pc: u64) -> bool {
     let mut hit_queue = false;
-    for d in &state.virtio_devices {
+    for d in &state.virtio.devices {
         for q in &d.queues {
             if guest_pa >= q.guest_pa && guest_pa < q.guest_pa + q.size * 16 && guest_pa & 0xf < 8{
                 hit_queue = true;
