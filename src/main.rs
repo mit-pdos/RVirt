@@ -168,6 +168,8 @@ unsafe fn sstart(_hartid: u64, device_tree_blob: u64) {
     *(pa2va(0xc00208c) as *mut u32) = !0;         //    .
     *(pa2va(0x0c201000) as *mut u32) = 0;         // Hart 0 S-mode threshold
 
+    context::initialize(&machine);
+
     csrw!(satp, MPA.satp());
     asm!("sfence.vma" ::: "memory" : "volatile");
 

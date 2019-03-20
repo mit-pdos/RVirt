@@ -1,8 +1,9 @@
 use spin::Mutex;
 use riscv_decode::Instruction;
-use crate::{csr, pfault, pmap, print, sum, virtio};
+use crate::context::{Context, CONTEXT};
+use crate::fdt::MachineMeta;
 use crate::plic::PlicState;
-use crate::context::Context;
+use crate::{csr, pfault, pmap, print, sum, virtio};
 
 #[allow(unused)]
 pub mod constants {
@@ -161,8 +162,6 @@ pub unsafe fn strap_entry() -> ! {
     unreachable!()
 }
 
-static SHADOW_STATE: Mutex<Context> = Mutex::new(Context::new());
-
 #[no_mangle]
 pub unsafe fn strap() {
     let old_satp = csrr!(satp);
@@ -179,7 +178,8 @@ pub unsafe fn strap() {
         loop {}
     }
 
-    let mut state = SHADOW_STATE.lock();
+    let mut state = CONTEXT.lock();
+    let mut state = (&mut *state).as_mut().unwrap();
 
     assert_eq!(state.shadow().satp(), old_satp);
 
