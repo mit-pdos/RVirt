@@ -126,6 +126,7 @@ unsafe fn sstart(_hartid: u64, device_tree_blob: u64) {
           add sp, sp, t0" ::: "t0" : "volatile");
     csrw!(stvec, crate::trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
+    csrs!(sstatus, trap::constants::STATUS_SUM);
 
     // Read and process host FDT.
     let fdt = Fdt::new(device_tree_blob);
