@@ -1,9 +1,12 @@
-
-use crate::{csr, pmap, print, virtio};
+use spin::Mutex;
+use crate::fdt::MachineMeta;
 use crate::plic::PlicState;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
 use crate::trap::constants::*;
 use crate::trap::U64Bits;
+use crate::{csr, pmap, print, virtio};
+
+pub static CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
 
 pub struct ControlRegisters {
     // sedeleg: u64, -- Hard-wired to zero
@@ -108,38 +111,6 @@ impl Uart {
 }
 
 impl Context {
-    pub const fn new() -> Self {
-        Self {
-            csrs: ControlRegisters{
-                sstatus: 0,
-                stvec: 0,
-                sie: 0,
-                sip: 0,
-                sscratch: 0,
-                sepc: 0,
-                scause: 0,
-                stval: 0,
-                satp: 0,
-
-                mtimecmp: u64::max_value(),
-            },
-            guest_memory: unsafe {  MemoryRegion::new(0, 0) },
-            plic: PlicState::new(),
-            uart: Uart {
-                dlab: false,
-                interrupt_enable: 0,
-                interrupt_id: 0,
-            },
-            virtio: VirtIO {
-                devices: [virtio::Device::new(); virtio::MAX_DEVICES],
-                queue_guest_pages: [0; virtio::MAX_DEVICES * virtio::MAX_QUEUES],
-                num_queue_guest_pages: 0,
-            },
-            smode: true,
-            no_interrupt: true,
-        }
-    }
-
     pub fn get_csr(&mut self, csr: u32) -> Option<u64> {
         Some(match csr as u64 {
             csr::sstatus => {
@@ -230,4 +201,36 @@ impl Context {
             pmap::MVA
         }
     }
+}
+
+pub unsafe fn initialize(machine: &MachineMeta) {
+    *CONTEXT.lock() = Some(Context{
+        csrs: ControlRegisters{
+            sstatus: 0,
+            stvec: 0,
+            sie: 0,
+            sip: 0,
+            sscratch: 0,
+            sepc: 0,
+            scause: 0,
+            stval: 0,
+            satp: 0,
+
+            mtimecmp: u64::max_value(),
+        },
+        guest_memory: MemoryRegion::new(0, 0),
+        plic: PlicState::new(),
+        uart: Uart {
+            dlab: false,
+            interrupt_enable: 0,
+            interrupt_id: 0,
+        },
+        virtio: VirtIO {
+            devices: [virtio::Device::new(); virtio::MAX_DEVICES],
+            queue_guest_pages: [0; virtio::MAX_DEVICES * virtio::MAX_QUEUES],
+            num_queue_guest_pages: 0,
+        },
+        smode: true,
+        no_interrupt: true,
+    });
 }
