@@ -16,9 +16,11 @@ mod riscv;
 mod print;
 
 mod backtrace;
+mod context;
 mod csr;
 mod elf;
 mod fdt;
+mod memory_region;
 mod pfault;
 mod plic;
 mod pmap;

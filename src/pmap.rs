@@ -1,5 +1,6 @@
 use crate::fdt::{self, MachineMeta};
-use crate::trap::{ShadowState, MAX_STACK_PADDR};
+use crate::context::Context;
+use crate::trap::MAX_STACK_PADDR;
 use crate::sum;
 use core::ops::{Index, IndexMut};
 use core::ptr;
@@ -415,7 +416,7 @@ pub fn flush_shadow_page_table() {
     }
 }
 
-pub fn handle_sfence_vma(_state: &mut ShadowState, _instruction: Instruction) {
+pub fn handle_sfence_vma(_state: &mut Context, _instruction: Instruction) {
     flush_shadow_page_table();
     // println!("sfence.vma");
 }

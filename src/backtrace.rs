@@ -1,15 +1,15 @@
-use crate::trap::ShadowState;
+use crate::context::Context;
 use crate::{pmap, trap};
 
 #[allow(unused)]
-pub unsafe fn print_guest_backtrace(state: &mut ShadowState, pc: u64) {
+pub unsafe fn print_guest_backtrace(state: &mut Context, pc: u64) {
     println!(" {:x}", pc);
 
     let mut ra = trap::get_register(1);
     let mut sp = trap::get_register(2);
     let mut fp = trap::get_register(8);
 
-    let page_table_ppn = state.satp & trap::constants::SATP_PPN;
+    let page_table_ppn = state.csrs.satp & trap::constants::SATP_PPN;
 
     let mut old_fp = 0;
     while old_fp != fp {
