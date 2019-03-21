@@ -1,4 +1,3 @@
-use core::sync::atomic::AtomicU64;
 use core::ops::{Index, IndexMut};
 use crate::pmap;
 
@@ -41,6 +40,9 @@ impl MemoryRegion {
 
         unsafe { Some(*(self.ptr.add(offset as usize / 8))) }
     }
+
+    pub fn base(&self) -> u64 { self.base_address }
+    pub fn len(&self) -> u64 { self.length_bytes }
 }
 
 impl Index<u64> for MemoryRegion {
@@ -76,23 +78,49 @@ impl IndexMut<u64> for MemoryRegion {
 /// addresses* to simplify usage.
 pub struct PageTableRegion {
     region: MemoryRegion,
+    end_pa: u64,
 }
 impl PageTableRegion {
     pub fn new(region: MemoryRegion) -> Self {
         assert_eq!((region.ptr as u64) % 4096, 0);
         assert_eq!(region.length_bytes % 4096, 0);
 
-        Self { region }
+        let end_pa = pmap::va2pa(region.ptr as u64) + region.length_bytes;
+
+        Self {
+            region,
+            end_pa,
+        }
+    }
+
+    pub unsafe fn set_pte_unchecked(&mut self, pte_address: u64, pte_value: u64) {
+        self.region[pte_address] = pte_value;
     }
 
     pub fn set_leaf_pte(&mut self, pte_address: u64, pte_value: u64) {
         assert!(pte_value & 0xf != 0x1);
+        assert!(!self.inside_region(pte_value));
         self.region[pte_address] = pte_value;
     }
 
     pub fn set_nonleaf_pte(&mut self, pte_address: u64, pte_value: u64) {
         assert_eq!(pte_value & 0xf, 0x1);
+        assert!(self.inside_region(pte_value));
         self.region[pte_address] = pte_value;
+    }
+
+    pub fn set_invalid_pte(&mut self, pte_address: u64, pte_value: u64) {
+        assert_eq!(pte_value & 0x1, 0);
+        self.region[pte_address] = pte_value;
+    }
+
+    // Returns a conservative answer of whether the pte could map some memory that overlapped this
+    // region.
+    fn inside_region(&self, pte: u64) -> bool {
+        // since we don't know page size (and because we know all mappings will point to physical
+        // addresses larger than the end of this region) we only check that the start of the page is
+        // beyond the end of this region.
+        ((pte >> 10) << 12) < self.end_pa
     }
 }
 

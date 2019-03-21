@@ -1,7 +1,8 @@
 use spin::Mutex;
 use crate::fdt::MachineMeta;
 use crate::plic::PlicState;
-use crate::memory_region::{MemoryRegion, PageTableRegion};
+use crate::pmap::{PageTables, PageTableRoot};
+use crate::memory_region::MemoryRegion;
 use crate::trap::constants::*;
 use crate::trap::U64Bits;
 use crate::{csr, pmap, print, virtio};
@@ -45,7 +46,7 @@ pub struct Context {
     pub virtio: VirtIO,
 
     pub guest_memory: MemoryRegion,
-    pub page_table_region: PageTableRegion,
+    pub shadow_page_tables: PageTables,
 
     // Whether the guest is in S-Mode.
     pub smode: bool,
@@ -191,20 +192,20 @@ impl Context {
         return true;
     }
 
-    pub fn shadow(&self) -> pmap::PageTableRoot {
+    pub fn shadow(&self) -> PageTableRoot {
         if (self.csrs.satp & SATP_MODE) == 0 {
-            pmap::MPA
+            PageTableRoot::MPA
         } else if !self.smode {
-            pmap::UVA
+            PageTableRoot::UVA
         } else if self.csrs.sstatus & STATUS_SUM == 0 {
-            pmap::KVA
+            PageTableRoot::KVA
         } else {
-            pmap::MVA
+            PageTableRoot::MVA
         }
     }
 }
 
-pub unsafe fn initialize(machine: &MachineMeta, page_table_region: PageTableRegion, guest_memory: MemoryRegion) {
+pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, guest_memory: MemoryRegion) {
     *CONTEXT.lock() = Some(Context{
         csrs: ControlRegisters{
             sstatus: 0,
@@ -220,7 +221,7 @@ pub unsafe fn initialize(machine: &MachineMeta, page_table_region: PageTableRegi
             mtimecmp: u64::max_value(),
         },
         guest_memory,
-        page_table_region,
+        shadow_page_tables,
         plic: PlicState::new(),
         uart: Uart {
             dlab: false,

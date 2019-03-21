@@ -30,7 +30,7 @@ mod virtio;
 
 use fdt::*;
 use trap::constants::*;
-use pmap::{pa2va, MPA, BOOT_PAGE_TABLE};
+use pmap::{pa2va, BOOT_PAGE_TABLE};
 
 #[lang = "eh_personality"] extern fn eh_personality() {}
 #[panic_handler] fn panic(info: &::core::panic::PanicInfo) -> ! { println!("{}", info); loop {}}
@@ -138,7 +138,7 @@ unsafe fn sstart(_hartid: u64, device_tree_blob: u64) {
     let machine = fdt.process();
 
     // Initialize memory subsystem.
-    let (page_table_region, guest_memory) = pmap::init(&machine);
+    let (shadow_page_tables, guest_memory) = pmap::init(&machine);
     let fdt = Fdt::new(pa2va(device_tree_blob));
 
     // Program PLIC
@@ -169,10 +169,7 @@ unsafe fn sstart(_hartid: u64, device_tree_blob: u64) {
     });
 
     // Initialize context
-    context::initialize(&machine, page_table_region, guest_memory);
-
-    // csrw!(satp, MPA.satp());
-    // asm!("sfence.vma" ::: "memory" : "volatile");
+    context::initialize(&machine, shadow_page_tables, guest_memory);
 
     // Jump into the guest kernel.
     asm!("mv a1, $0 // dtb = guest_dtb

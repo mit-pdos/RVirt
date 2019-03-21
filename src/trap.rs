@@ -272,8 +272,7 @@ pub unsafe fn strap() {
         forward_exception(&mut state, cause, csrr!(sepc));
     }
 
-    csrw!(satp, state.shadow().satp());
-//    *(SSTACK_BASE as *mut u64) = state.shadow().satp();
+    state.shadow_page_tables.install_root(state.shadow());
 }
 
 fn handle_interrupt(state: &mut Context, cause: u64) {

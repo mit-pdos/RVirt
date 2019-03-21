@@ -99,3 +99,6 @@ macro_rules! csrc {
 //         }
 //     };
 // }
+pub fn sfence_vma() {
+    unsafe { asm!("sfence.vma" ::: "memory" : "volatile") }
+}

@@ -7,7 +7,7 @@ use riscv_decode::Instruction;
 /// be handled, or false if it should be forwarded on to the guest.
 pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> bool {
     let shadow = state.shadow();
-    if shadow == MPA {
+    if shadow == PageTableRoot::MPA {
         println!("Page fault without guest paging enabled?");
         return false;
     }
@@ -32,9 +32,9 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
 
         // Check U bit
         match shadow {
-            UVA => if translation.pte_value & PTE_USER == 0 { return false; }
-            KVA => if translation.pte_value & PTE_USER != 0 { return false; }
-            MVA => {}
+            PageTableRoot::UVA => if translation.pte_value & PTE_USER == 0 { return false; }
+            PageTableRoot::KVA => if translation.pte_value & PTE_USER != 0 { return false; }
+            PageTableRoot::MVA => {}
             _ => unreachable!(),
         }
 
@@ -65,7 +65,8 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
                 return virtio::handle_queue_access(state, guest_pa, host_pa, pc);
             }
 
-            *shadow.get_pte(page) = (host_pa >> 2) | perm | PTE_AD | PTE_USER | PTE_VALID;
+            state.shadow_page_tables.set_mapping(
+                shadow, page, (host_pa >> 2) | perm | PTE_AD | PTE_USER | PTE_VALID);
             return true;
         } else if access != PTE_EXECUTE && state.smode {
             let pa = (translation.guest_pa & !0xfff) | (guest_va & 0xfff);
