@@ -23,19 +23,17 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
     };
 
     let page = guest_va & !0xfff;
-    if let Some(translation) = translate_guest_address((state.csrs.satp & SATP_PPN) << 12, page) {
-        let guest_pte = sum::access_user_memory(|| *translation.pte);
-
+    if let Some(translation) = translate_guest_address(&state.guest_memory, (state.csrs.satp & SATP_PPN) << 12, page) {
         // Check R/W/X bits
-        if guest_pte & access == 0 {
+        if translation.pte_value & access == 0 {
             // println!("Bad access bit guest_va={:#x}, guest_pte={:#x}, cause={}", guest_va, guest_pte, cause);
             return false;
         }
 
         // Check U bit
         match shadow {
-            UVA => if guest_pte & PTE_USER == 0 { return false; }
-            KVA => if guest_pte & PTE_USER != 0 { return false; }
+            UVA => if translation.pte_value & PTE_USER == 0 { return false; }
+            KVA => if translation.pte_value & PTE_USER != 0 { return false; }
             MVA => {}
             _ => unreachable!(),
         }
@@ -43,19 +41,22 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
         if let Some(host_pa) = mpa2pa(translation.guest_pa) {
             // Set A and D bits
             // TODO: set bits atomically
-            let pte = sum::access_user_memory(|| {
-                if (*translation.pte & PTE_DIRTY) == 0 && access == PTE_WRITE {
-                    *translation.pte = *translation.pte | PTE_DIRTY | PTE_ACCESSED;
-                } else if (*translation.pte & PTE_ACCESSED) == 0 {
-                    *translation.pte = *translation.pte | PTE_ACCESSED;
-                }
-                *translation.pte
-            });
-
-            let perm = if (pte & PTE_DIRTY) == 0 && access != PTE_WRITE {
-                (guest_pte & (PTE_READ | PTE_EXECUTE))
+            let new_pte = if (translation.pte_value & PTE_DIRTY) == 0 && access == PTE_WRITE {
+                translation.pte_value | PTE_DIRTY | PTE_ACCESSED
+            } else if (translation.pte_value & PTE_ACCESSED) == 0 {
+                translation.pte_value | PTE_ACCESSED
             } else {
-                (guest_pte & (PTE_READ | PTE_WRITE | PTE_EXECUTE))
+                translation.pte_value
+            };
+
+            if new_pte != translation.pte_value {
+                state.guest_memory[translation.pte_addr] = new_pte;
+            }
+
+            let perm = if (new_pte & PTE_DIRTY) == 0 && access != PTE_WRITE {
+                (new_pte & (PTE_READ | PTE_EXECUTE))
+            } else {
+                (new_pte & (PTE_READ | PTE_WRITE | PTE_EXECUTE))
             };
 
             if virtio::is_queue_access(state, translation.guest_pa) {

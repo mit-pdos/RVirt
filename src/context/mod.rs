@@ -45,6 +45,7 @@ pub struct Context {
     pub virtio: VirtIO,
 
     pub guest_memory: MemoryRegion,
+    pub page_table_region: PageTableRegion,
 
     // Whether the guest is in S-Mode.
     pub smode: bool,
@@ -203,7 +204,7 @@ impl Context {
     }
 }
 
-pub unsafe fn initialize(machine: &MachineMeta) {
+pub unsafe fn initialize(machine: &MachineMeta, page_table_region: PageTableRegion, guest_memory: MemoryRegion) {
     *CONTEXT.lock() = Some(Context{
         csrs: ControlRegisters{
             sstatus: 0,
@@ -218,7 +219,8 @@ pub unsafe fn initialize(machine: &MachineMeta) {
 
             mtimecmp: u64::max_value(),
         },
-        guest_memory: MemoryRegion::new(0, 0),
+        guest_memory,
+        page_table_region,
         plic: PlicState::new(),
         uart: Uart {
             dlab: false,

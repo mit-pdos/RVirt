@@ -164,9 +164,6 @@ pub unsafe fn strap_entry() -> ! {
 
 #[no_mangle]
 pub unsafe fn strap() {
-    let old_satp = csrr!(satp);
-    csrw!(satp, pmap::ROOT.satp());
-
     let cause = csrr!(scause);
     let status = csrr!(sstatus);
 
@@ -180,8 +177,6 @@ pub unsafe fn strap() {
 
     let mut state = CONTEXT.lock();
     let mut state = (&mut *state).as_mut().unwrap();
-
-    assert_eq!(state.shadow().satp(), old_satp);
 
     if (cause as isize) < 0 {
         handle_interrupt(&mut state, cause);
@@ -404,7 +399,7 @@ fn set_mtimecmp0(value: u64) {
 }
 
 pub unsafe fn decode_instruction_at_address(state: &mut Context, guest_va: u64) -> (u32, Option<Instruction>, u64) {
-    let pc_ptr = state.shadow().address_to_pointer(guest_va);
+    let pc_ptr = guest_va as *const u16;
     let (len, instruction) = sum::access_user_memory(||{
         let il: u16 = *pc_ptr;
         match riscv_decode::instruction_length(il) {

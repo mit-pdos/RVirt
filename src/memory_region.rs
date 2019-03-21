@@ -1,44 +1,106 @@
 use core::sync::atomic::AtomicU64;
-use core::ops::Index;
+use core::ops::{Index, IndexMut};
+use crate::pmap;
 
 pub struct MemoryRegion {
     ptr: *mut u64,
-    len: u64,
+    base_address: u64,
+    length_bytes: u64,
 }
 
 unsafe impl Send for MemoryRegion {}
 
 impl MemoryRegion {
-    pub const unsafe fn new(address: u64, length: u64) -> Self {
+    pub unsafe fn new(address: u64, length: u64) -> Self {
+        assert_eq!(length % 8, 0);
         Self {
             ptr: address as *mut u64,
-            len: length,
+            base_address: pmap::va2pa(address),
+            length_bytes: length,
         }
     }
 
-    pub fn get_atomicu64(&mut self, index: u64) -> &AtomicU64 {
-        assert!(index/8 < self.len);
-        unsafe { &*((self.ptr.add(index as usize)) as *mut AtomicU64) }
+    pub unsafe fn with_base_address(address: u64, base_address: u64, length: u64) -> Self {
+        assert_eq!(length % 8, 0);
+        Self {
+            ptr: address as *mut u64,
+            base_address,
+            length_bytes: length,
+        }
+    }
+
+    pub fn get(&self, index: u64) -> Option<u64> {
+        if index % 8 != 0 || index < self.base_address {
+            return None;
+        }
+
+        let offset = index - self.base_address;
+        if offset >= self.length_bytes {
+            return None;
+        }
+
+        unsafe { Some(*(self.ptr.add(offset as usize / 8))) }
     }
 }
 
 impl Index<u64> for MemoryRegion {
     type Output = u64;
+    /// Return a reference to a u64 index many *bytes* into the memory region. The value of index
+    /// must be divisible by 8.
     fn index(&self, index: u64) -> &u64 {
-        assert!(index/8 < self.len);
-        unsafe { &*(self.ptr.add(index as usize)) }
+        assert_eq!(index % 8, 0);
+        assert!(index >= self.base_address);
+
+        let offset = index - self.base_address;
+        assert!(offset < self.length_bytes);
+
+        unsafe { &*(self.ptr.add(offset as usize / 8)) }
     }
 }
 
+impl IndexMut<u64> for MemoryRegion {
+    /// Return a reference to a u64 index many *bytes* into the memory region. The value of index
+    /// must be divisible by 8.
+    fn index_mut(&mut self, index: u64) -> &mut u64 {
+        assert_eq!(index % 8, 0);
+        assert!(index >= self.base_address);
+
+        let offset = index - self.base_address;
+        assert!(offset < self.length_bytes);
+
+        unsafe { &mut *(self.ptr.add(offset as usize / 8)) }
+    }
+}
+
+/// Use to represent a region containing page tables. All addresses are in terms of *physical
+/// addresses* to simplify usage.
 pub struct PageTableRegion {
     region: MemoryRegion,
 }
 impl PageTableRegion {
     pub fn new(region: MemoryRegion) -> Self {
         assert_eq!((region.ptr as u64) % 4096, 0);
-        assert_eq!(region.len % 4096, 0);
+        assert_eq!(region.length_bytes % 4096, 0);
 
         Self { region }
     }
 
+    pub fn set_leaf_pte(&mut self, pte_address: u64, pte_value: u64) {
+        assert!(pte_value & 0xf != 0x1);
+        self.region[pte_address] = pte_value;
+    }
+
+    pub fn set_nonleaf_pte(&mut self, pte_address: u64, pte_value: u64) {
+        assert_eq!(pte_value & 0xf, 0x1);
+        self.region[pte_address] = pte_value;
+    }
+}
+
+impl Index<u64> for PageTableRegion {
+    type Output = u64;
+    /// Return a reference to the pte at physical address `address`. This must be divisible by 8 and
+    /// inside the memory region.
+    fn index(&self, address: u64) -> &u64 {
+        &self.region[address]
+    }
 }

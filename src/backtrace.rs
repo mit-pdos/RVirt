@@ -1,8 +1,9 @@
 use crate::context::Context;
+use crate::memory_region::MemoryRegion;
 use crate::{pmap, trap};
 
 #[allow(unused)]
-pub unsafe fn print_guest_backtrace(state: &mut Context, pc: u64) {
+pub unsafe fn print_guest_backtrace(guest_memory: &MemoryRegion, state: &mut Context, pc: u64) {
     println!(" {:x}", pc);
 
     let mut ra = trap::get_register(1);
@@ -15,16 +16,15 @@ pub unsafe fn print_guest_backtrace(state: &mut Context, pc: u64) {
     while old_fp != fp {
         println!(" {:x}", ra);
 
-        ra = match fp.checked_sub(8).and_then(|a| pmap::read64(page_table_ppn, a)) {
+        ra = match fp.checked_sub(8).and_then(|a| pmap::read64(guest_memory, page_table_ppn, a)) {
             Some(v) => v,
             None => break,
         };
 
         old_fp = fp;
-        fp = match fp.checked_sub(16).and_then(|a| pmap::read64(page_table_ppn, a)) {
+        fp = match fp.checked_sub(16).and_then(|a| pmap::read64(guest_memory, page_table_ppn, a)) {
             Some(v) => v,
             None => break,
         };
     }
-
 }

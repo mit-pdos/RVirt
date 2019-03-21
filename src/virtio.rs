@@ -91,7 +91,7 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
                 }
 
                 // Sad, but necessary because we don't know all the pages this page is mapped.
-                pmap::flush_shadow_page_table();
+                pmap::flush_shadow_page_table(&mut state.page_table_region);
 
                 let index = state.virtio.num_queue_guest_pages;
                 assert!(index < state.virtio.queue_guest_pages.len());
