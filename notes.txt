@@ -7,6 +7,10 @@ RISC-V Privileged Spec
 ----------------------
 https://content.riscv.org/wp-content/uploads/2017/05/riscv-privileged-v1.10.pdf
 
+Draft Spec Releases
+-------------------
+https://github.com/riscv/riscv-isa-manual/releases
+
 Device Configuration
 --------------------
 https://github.com/qemu/qemu/blob/master/hw/riscv/virt.c
