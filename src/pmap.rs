@@ -229,10 +229,7 @@ pub struct AddressTranslation {
 // Returns the guest physical address associated with a given guest virtual address, by walking
 // guest page tables.
 pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64, addr: u64) -> Option<AddressTranslation> {
-    if !is_sv39(addr) {
-        return None;
-    }
-    if root_page_table > unsafe{MAX_GUEST_PHYSICAL_ADDRESS} || root_page_table % PAGE_SIZE != 0 {
+    if !is_sv39(addr) || root_page_table % PAGE_SIZE != 0 {
         return None;
     }
 
@@ -240,7 +237,7 @@ pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64
     for level in 0..3 {
         let pte_index = ((addr >> (30 - 9 * level)) & 0x1ff);
         let pte_addr = page_table + pte_index * 8;
-        let pte = guest_memory[pte_addr];
+        let pte = guest_memory.get(pte_addr)?;
 
         if pte & PTE_VALID == 0 || ((pte & PTE_WRITE) != 0 && (pte & PTE_READ) == 0) {
             return None;
@@ -254,15 +251,11 @@ pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64
             return Some(AddressTranslation { guest_pa, pte_addr, pte_value: pte });
         } else {
             page_table = (pte >> 10) << 12;
-            if page_table > unsafe { MAX_GUEST_PHYSICAL_ADDRESS } {
-                return None;
-            }
         }
     }
 
     None
 }
-
 
 pub fn init(machine: &MachineMeta) -> (PageTables, MemoryRegion) {
     unsafe {
