@@ -209,28 +209,31 @@ pub unsafe fn strap() {
             }
             Some(fence @ Instruction::SfenceVma(_)) => pmap::handle_sfence_vma(&mut state, fence),
             Some(Instruction::Csrrw(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                state.set_csr(i.csr(), get_register(i.rs1()));
-                set_register(i.rd(), prev);
+                let value = get_register(state, i.rs1());
+                state.set_csr(i.csr(), value);
+                set_register(state, i.rd(), prev);
             }
             Some(Instruction::Csrrs(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                state.set_csr(i.csr(), prev | get_register(i.rs1()));
-                set_register(i.rd(), prev);
+                let value = prev | get_register(state, i.rs1());
+                state.set_csr(i.csr(), value);
+                set_register(state, i.rd(), prev);
             }
             Some(Instruction::Csrrc(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                state.set_csr(i.csr(), prev & !get_register(i.rs1()));
-                set_register(i.rd(), prev);
+                let value = prev & !get_register(state, i.rs1());
+                state.set_csr(i.csr(), value);
+                set_register(state, i.rd(), prev);
             }
             Some(Instruction::Csrrwi(i)) => if let Some(prev) = state.get_csr(i.csr()) {
                 state.set_csr(i.csr(), i.zimm() as u64);
-                set_register(i.rd(), prev);
+                set_register(state, i.rd(), prev);
             }
             Some(Instruction::Csrrsi(i)) => if let Some(prev) = state.get_csr(i.csr()) {
                 state.set_csr(i.csr(), prev | (i.zimm() as u64));
-                set_register(i.rd(), prev);
+                set_register(state, i.rd(), prev);
             }
             Some(Instruction::Csrrci(i)) => if let Some(prev) = state.get_csr(i.csr()) {
                 state.set_csr(i.csr(), prev & !(i.zimm() as u64));
-                set_register(i.rd(), prev);
+                set_register(state, i.rd(), prev);
             }
             Some(decoded) => {
                 println!("Unrecognized instruction! {:?} @ pc={:#x}", decoded, pc);
@@ -249,13 +252,13 @@ pub unsafe fn strap() {
         }
         maybe_forward_interrupt(&mut state, csrr!(sepc));
     } else if cause == 8 && state.smode {
-        match get_register(17) {
+        match get_register(state, 17) {
             0 => {
                 state.csrs.sip.set(IP_STIP, false);
-                state.csrs.mtimecmp = get_mtime() + get_register(10);
+                state.csrs.mtimecmp = get_mtime() + get_register(state, 10);
                 set_mtimecmp0(state.csrs.mtimecmp);
             }
-            1 => print::guest_putchar(get_register(10) as u8),
+            1 => print::guest_putchar(get_register(state, 10) as u8),
             5 => asm!("fence.i" :::: "volatile"),
             6 | 7 => pmap::handle_sfence_vma(&mut state,
                                              Instruction::SfenceVma(riscv_decode::types::RType(0)) /* TODO */),
@@ -368,7 +371,7 @@ fn forward_exception(state: &mut Context, cause: u64, sepc: u64) {
     csrw!(sepc, state.csrs.stvec & TVEC_BASE);
 }
 
-pub fn set_register(reg: u32, value: u64) {
+pub fn set_register(state: &mut Context, reg: u32, value: u64) {
     assert!((value) & 0xffff != 0x9e30);
     assert!((value >> 2) & 0xffff != 0x9e30);
     assert!((value >> 4) & 0xffff != 0x9e30);
@@ -376,15 +379,15 @@ pub fn set_register(reg: u32, value: u64) {
 
     match reg {
         0 => {},
-        1 | 3..=31 => unsafe { *(SSTACK_BASE as *mut u64).offset(reg as isize) = value as u64; }
+        1 | 3..=31 => state.saved_registers[reg as u64 * 8] = value,
         2 => csrw!(sscratch, value),
         _ => unreachable!(),
     }
 }
-pub fn get_register(reg: u32) -> u64 {
+pub fn get_register(state: &mut Context, reg: u32) -> u64 {
     match reg {
         0 => 0,
-        1 | 3..=31 => unsafe { *(SSTACK_BASE as *const u64).offset(reg as isize) as u64 },
+        1 | 3..=31 => state.saved_registers[reg as u64 * 8],
         2 => csrr!(sscratch),
         _ => unreachable!(),
     }

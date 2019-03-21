@@ -45,6 +45,7 @@ pub struct Context {
     pub uart: Uart,
     pub virtio: VirtIO,
 
+    pub saved_registers: MemoryRegion,
     pub guest_memory: MemoryRegion,
     pub shadow_page_tables: PageTables,
 
@@ -220,6 +221,7 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
 
             mtimecmp: u64::max_value(),
         },
+        saved_registers: MemoryRegion::with_base_address(SSTACK_BASE, 0, 32 * 8),
         guest_memory,
         shadow_page_tables,
         plic: PlicState::new(),

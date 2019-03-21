@@ -95,8 +95,14 @@ fn is_uart_access(guest_pa: u64) -> bool {
 unsafe fn handle_uart_access(state: &mut Context, guest_pa: u64, pc: u64) -> bool {
     let (_instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
     match decoded {
-        Some(Instruction::Lb(i)) => trap::set_register(i.rd(), state.uart.read(guest_pa) as u64),
-        Some(Instruction::Sb(i)) => state.uart.write(&mut state.plic, guest_pa, (trap::get_register(i.rs2()) & 0xff) as u8),
+        Some(Instruction::Lb(i)) => {
+            let value = state.uart.read(guest_pa) as u64;
+            trap::set_register(state, i.rd(), value);
+        }
+        Some(Instruction::Sb(i)) => {
+            let value = (trap::get_register(state, i.rs2()) & 0xff) as u8;
+            state.uart.write(&mut state.plic, guest_pa, value);
+        }
         Some(instr) => {
             println!("UART: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, pc);
             loop {}
@@ -117,10 +123,10 @@ unsafe fn handle_plic_access(state: &mut Context, guest_pa: u64, pc: u64) -> boo
         Some(Instruction::Lw(i)) => {
             let value = state.plic.read_u32(guest_pa) as i32 as i64 as u64;
             // println!("PLIC: Read value {:#x} at address {:#x}", value, guest_pa);
-            trap::set_register(i.rd(), value)
+            trap::set_register(state, i.rd(), value)
         }
         Some(Instruction::Sw(i)) => {
-            let value = trap::get_register(i.rs2()) as u32;
+            let value = trap::get_register(state, i.rs2()) as u32;
             // println!("PLIC: Writing {:#x} to address {:#x}", value, guest_pa);
 
             let mut clear_seip = false;
