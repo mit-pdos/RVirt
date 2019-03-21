@@ -49,6 +49,8 @@ pub struct Context {
     pub guest_memory: MemoryRegion,
     pub shadow_page_tables: PageTables,
 
+    pub guest_shift: u64,
+
     // Whether the guest is in S-Mode.
     pub smode: bool,
 
@@ -235,6 +237,7 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
             queue_guest_pages: [0; virtio::MAX_DEVICES * virtio::MAX_QUEUES],
             num_queue_guest_pages: 0,
         },
+        guest_shift: machine.guest_shift,
         smode: true,
         no_interrupt: true,
     });

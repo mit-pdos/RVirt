@@ -179,7 +179,7 @@ pub unsafe fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u
                 let value = trap::get_register(state, i.rs2());
                 if value == 0 {
                     *(pmap::pa2va(host_pa) as *mut u64) = 0;
-                } else if value >= 0x80000000 && value < pmap::MAX_GUEST_PHYSICAL_ADDRESS {
+                } else if state.guest_memory.in_region(value) {
                     *(pmap::pa2va(host_pa) as *mut u64) = value.wrapping_add(OFFSET);
                 } else {
                     println!("VQUEUE: sd {:#x}, ({:#x}) Failed", value, host_pa);

@@ -26,7 +26,6 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
     if let Some(translation) = translate_guest_address(&state.guest_memory, (state.csrs.satp & SATP_PPN) << 12, page) {
         // Check R/W/X bits
         if translation.pte_value & access == 0 {
-            // println!("Bad access bit guest_va={:#x}, guest_pte={:#x}, cause={}", guest_va, guest_pte, cause);
             return false;
         }
 
@@ -38,9 +37,10 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
             _ => unreachable!(),
         }
 
-        if let Some(host_pa) = mpa2pa(translation.guest_pa) {
+        if state.guest_memory.in_region(translation.guest_pa) {
+            let host_pa = translation.guest_pa + state.guest_shift;
+
             // Set A and D bits
-            // TODO: set bits atomically
             let new_pte = if (translation.pte_value & PTE_DIRTY) == 0 && access == PTE_WRITE {
                 translation.pte_value | PTE_DIRTY | PTE_ACCESSED
             } else if (translation.pte_value & PTE_ACCESSED) == 0 {
@@ -50,6 +50,7 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
             };
 
             if new_pte != translation.pte_value {
+                // TODO: do this atomically
                 state.guest_memory[translation.pte_addr] = new_pte;
             }
 

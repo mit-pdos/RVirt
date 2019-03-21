@@ -41,8 +41,17 @@ impl MemoryRegion {
         unsafe { Some(*(self.ptr.add(offset as usize / 8))) }
     }
 
-    pub fn base(&self) -> u64 { self.base_address }
-    pub fn len(&self) -> u64 { self.length_bytes }
+    pub fn base(&self) -> u64 {
+        self.base_address
+    }
+
+    pub fn len(&self) -> u64 {
+        self.length_bytes
+    }
+
+    pub fn in_region(&self, addr: u64) -> bool {
+        addr >= self.base_address && addr < self.base_address + self.length_bytes
+    }
 }
 
 impl Index<u64> for MemoryRegion {

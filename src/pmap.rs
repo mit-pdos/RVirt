@@ -13,8 +13,6 @@ const HPAGE_SIZE: u64 = 2 * 1024 * 1024;
 
 const PAGE_TABLE_SHIFT: u32 = 9;
 
-pub static mut MAX_GUEST_PHYSICAL_ADDRESS: u64 = 0;
-
 pub const SV39_MASK: u64 = !((!0) << 39);
 
 #[allow(unused)]
@@ -188,19 +186,6 @@ pub fn va2pa(va: u64) -> u64 {
     assert!(va < DIRECT_MAP_OFFSET + (DIRECT_MAP_PAGES<<30));
     va - DIRECT_MAP_OFFSET
 }
-pub fn mpa2pa(mpa: u64) -> Option<u64> {
-    if mpa >= 0x80000000 && mpa < unsafe {MAX_GUEST_PHYSICAL_ADDRESS} {
-        return Some(mpa + fdt::VM_RESERVATION_SIZE as u64);
-    }
-
-    // if mpa < 0x30000000 { // DEBUG, MROM, TEST, CLINT, PLIC, and UART0 inaccessible
-    //     None
-    // } else if mpa < 0x80000000 { // VIRTIO and PCIe accessible
-    //     Some(mpa)
-    // } else { // High memory inacessible
-        None
-    // }
-}
 
 /// Returns whether va is a sign extended 39 bit address
 pub fn is_sv39(va: u64) -> bool {
@@ -291,7 +276,6 @@ pub fn init(machine: &MachineMeta) -> (PageTables, MemoryRegion) {
         crate::print::uart::UART = pa2va(crate::print::uart::UART as u64) as *mut _;
 
         assert_eq!(machine.gpm_offset, 0x80000000);
-        MAX_GUEST_PHYSICAL_ADDRESS = machine.gpm_offset + machine.gpm_size;
 
         // Map guest physical memory
         assert_eq!(machine.gpm_size % HPAGE_SIZE, 0);
@@ -340,39 +324,37 @@ pub fn print_page_table(pt: u64, level: u8) {
 }
 
 #[allow(unused)]
-pub fn print_guest_page_table(pt: u64, level: u8, base: u64) {
-    unsafe {
-        if pt >= MAX_GUEST_PHYSICAL_ADDRESS {
-            println!("[SATP Invalid]");
-            return;
+pub fn print_guest_page_table(guest_memory: &MemoryRegion, pt: u64, level: u8, base: u64) {
+    if !guest_memory.in_region(pt) {
+        println!("[SATP Invalid]");
+        return;
+    }
+
+    for i in 0..512 {
+        let addr = base + (i << (12 + level * 9));
+        let pte = guest_memory[pt + i*8];
+        if pte == 0 {
+            continue;
         }
 
-        for i in 0..512 {
-            let addr = base + (i << (12 + level * 9));
-            let pte: u64 = unimplemented!(); //*MPA.address_to_pointer::<u64>(pt + i*8);
-            if pte == 0 {
-                continue;
-            }
+        for _ in 0..(2 - level) {
+            print!("__ ");
+        }
 
-            for _ in 0..(2 - level) {
-                print!("__ ");
+        if pte & PTE_RWXV == PTE_VALID {
+            assert!(level != 0);
+            let child = (pte >> 10) << 12;
+            if !guest_memory.in_region(child) {
+                println!("{:#x}: {:#x} (bad ppn)", addr, pte);
+            } else {
+                println!("{:#x}: {:#x}", addr, pte);
+                print_guest_page_table(guest_memory, child, level - 1, addr);
+                //break;
             }
-
-            if pte & PTE_RWXV == PTE_VALID {
-                assert!(level != 0);
-                let child = (pte >> 10) << 12;
-                if child >= MAX_GUEST_PHYSICAL_ADDRESS {
-                    println!("{:#x}: {:#x} (bad ppn)", addr, pte);
-                } else {
-                    println!("{:#x}: {:#x}", addr, pte);
-                    print_guest_page_table(child, level - 1, addr);
-                    //break;
-                }
-            } else if pte & PTE_VALID != 0 {
-                println!("{:#x} -> {:#x}", addr, (pte >> 10) << 12);
-            } else if pte != 0 {
-                println!("{:#x}: {:#x} (not valid)", addr, pte);
-            }
+        } else if pte & PTE_VALID != 0 {
+            println!("{:#x} -> {:#x}", addr, (pte >> 10) << 12);
+        } else if pte != 0 {
+            println!("{:#x}: {:#x} (not valid)", addr, pte);
         }
     }
 }
@@ -393,12 +375,9 @@ pub fn handle_sfence_vma(state: &mut Context, _instruction: Instruction) {
 pub fn read64(guest_memory: &MemoryRegion, page_table_ppn: u64, guest_va: u64) -> Option<u64> {
     let guest_page = guest_va & !0xfff;
     if let Some(page_translation) = translate_guest_address(guest_memory, page_table_ppn << 12, guest_page) {
-        if mpa2pa(page_translation.guest_pa).is_some() {
-            // assert!(!virtio::is_queue_access(state, page_translation.guest_pa));
-
-            let guest_pa = (page_translation.guest_pa & !0xfff) | (guest_va & 0xfff);
-            return guest_memory.get(guest_pa);
-        }
+        // assert!(!virtio::is_queue_access(state, page_translation.guest_pa));
+        let guest_pa = (page_translation.guest_pa & !0xfff) | (guest_va & 0xfff);
+        return guest_memory.get(guest_pa);
     }
 
     None
