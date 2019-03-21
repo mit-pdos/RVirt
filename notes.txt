@@ -9,7 +9,7 @@ https://content.riscv.org/wp-content/uploads/2017/05/riscv-privileged-v1.10.pdf
 
 Device Configuration
 --------------------
-https://github.com/riscv/riscv-qemu/blob/riscv-all/hw/riscv/virt.c
+https://github.com/qemu/qemu/blob/master/hw/riscv/virt.c
 
 Description of PLIC / CLINT
 ---------------------------
