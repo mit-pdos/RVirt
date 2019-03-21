@@ -242,83 +242,79 @@ pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64
     None
 }
 
-pub fn init(machine: &MachineMeta) -> (PageTables, MemoryRegion) {
-    unsafe {
-        // Setup direct map region in boot page table
-        for i in 0..DIRECT_MAP_PAGES {
-            *((BOOT_PAGE_TABLE + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
-        }
-
-        // Create guest memory region
-        let guest_memory = MemoryRegion::with_base_address(
-            pa2va(machine.gpm_offset + machine.guest_shift), machine.gpm_offset, machine.gpm_size);
-
-        // Create shadow page tables
-        let memory_region_length = machine.hpm_offset + fdt::VM_RESERVATION_SIZE - MAX_STACK_PADDR;
-        let memory_region = MemoryRegion::new(pa2va(MAX_STACK_PADDR), memory_region_length);
-        let mut shadow_page_tables = PageTables::new(memory_region, machine.initrd_start, machine.initrd_end);
-
-        // Initialize shadow page tables
-        for &root in &[MPA, UVA, KVA, MVA] {
-            let pa = shadow_page_tables.root_pa(root);
-            ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE as usize);
-
-            // Direct map region
-            for i in 0..DIRECT_MAP_PAGES {
-                *((pa + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
-            }
-
-            // Hypervisor code + data
-            *((pa + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
-        }
-
-        shadow_page_tables.install_root(MPA);
-        crate::print::uart::UART = pa2va(crate::print::uart::UART as u64) as *mut _;
-
-        assert_eq!(machine.gpm_offset, 0x80000000);
-
-        // Map guest physical memory
-        assert_eq!(machine.gpm_size % HPAGE_SIZE, 0);
-        let root_pa = shadow_page_tables.root_pa(MPA);
-        let npages = machine.gpm_size / HPAGE_SIZE;
-        for p in 0..npages  {
-            let va = machine.gpm_offset + p * HPAGE_SIZE;
-            let pa = va + machine.guest_shift;
-
-            let pte_index = va >> 30;
-            let pte_addr = root_pa + pte_index * 8;
-            let pte = shadow_page_tables.region[pte_addr];
-            let page_table = if pte & PTE_VALID != 0 {
-                assert_eq!(pte & (PTE_READ | PTE_WRITE | PTE_EXECUTE), 0);
-                (pte >> 10) << 12
-            } else {
-                let page = shadow_page_tables.alloc_page();
-                shadow_page_tables.region.set_nonleaf_pte(pte_addr, (page >> 2) | PTE_VALID);
-                page
-            };
-            shadow_page_tables.region.set_leaf_pte(page_table + ((va >> 21) & 0x1ff) * 8,
-                                                   (pa >> 2) | PTE_AD | PTE_USER | PTE_RWXV);
-        }
-
-        (shadow_page_tables, guest_memory)
+pub unsafe fn init(machine: &MachineMeta) -> (PageTables, MemoryRegion) {
+    // Setup direct map region in boot page table
+    for i in 0..DIRECT_MAP_PAGES {
+        *((BOOT_PAGE_TABLE + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
     }
+
+    // Create guest memory region
+    let guest_memory = MemoryRegion::with_base_address(
+        pa2va(machine.gpm_offset + machine.guest_shift), machine.gpm_offset, machine.gpm_size);
+
+    // Create shadow page tables
+    let memory_region_length = machine.hpm_offset + fdt::VM_RESERVATION_SIZE - MAX_STACK_PADDR;
+    let memory_region = MemoryRegion::new(pa2va(MAX_STACK_PADDR), memory_region_length);
+    let mut shadow_page_tables = PageTables::new(memory_region, machine.initrd_start, machine.initrd_end);
+
+    // Initialize shadow page tables
+    for &root in &[MPA, UVA, KVA, MVA] {
+        let pa = shadow_page_tables.root_pa(root);
+        ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE as usize);
+
+        // Direct map region
+        for i in 0..DIRECT_MAP_PAGES {
+            *((pa + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
+        }
+
+        // Hypervisor code + data
+        *((pa + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
+    }
+
+    shadow_page_tables.install_root(MPA);
+    crate::print::uart::UART = pa2va(crate::print::uart::UART as u64) as *mut _;
+
+    assert_eq!(machine.gpm_offset, 0x80000000);
+
+    // Map guest physical memory
+    assert_eq!(machine.gpm_size % HPAGE_SIZE, 0);
+    let root_pa = shadow_page_tables.root_pa(MPA);
+    let npages = machine.gpm_size / HPAGE_SIZE;
+    for p in 0..npages  {
+        let va = machine.gpm_offset + p * HPAGE_SIZE;
+        let pa = va + machine.guest_shift;
+
+        let pte_index = va >> 30;
+        let pte_addr = root_pa + pte_index * 8;
+        let pte = shadow_page_tables.region[pte_addr];
+        let page_table = if pte & PTE_VALID != 0 {
+            assert_eq!(pte & (PTE_READ | PTE_WRITE | PTE_EXECUTE), 0);
+            (pte >> 10) << 12
+        } else {
+            let page = shadow_page_tables.alloc_page();
+            shadow_page_tables.region.set_nonleaf_pte(pte_addr, (page >> 2) | PTE_VALID);
+            page
+        };
+        shadow_page_tables.region.set_leaf_pte(page_table + ((va >> 21) & 0x1ff) * 8,
+                                               (pa >> 2) | PTE_AD | PTE_USER | PTE_RWXV);
+    }
+
+    (shadow_page_tables, guest_memory)
 }
 
 #[allow(unused)]
-pub fn print_page_table(pt: u64, level: u8) {
-    unsafe {
-        for i in 0..512 {
-            let pte = *(pa2va(pt + i*8) as *const u64);
-            if pte & PTE_VALID != 0 {
-                for _ in 0..(4 - level) {
-                    print!("  ");
-                }
-                println!("{:#x}: {:#x}", i *8, pte);
+pub fn print_page_table(page_table_region: &PageTableRegion, pt: u64, level: u8) {
+    for i in 0..512 {
+        let pte = page_table_region[pt + i*8];
+        if pte & PTE_VALID != 0 {
+            for _ in 0..(3 - level) {
+                print!("  ");
             }
-            if pte & PTE_RWXV == PTE_VALID {
-                assert!(level != 0);
-                print_page_table((pte >> 10) << 12, level - 1);
-            }
+            println!("{:#x}: {:#x}", i * 8, pte);
+        }
+        if pte & PTE_RWXV == PTE_VALID {
+            assert!(level != 0);
+            print_page_table(page_table_region, (pte >> 10) << 12, level - 1);
         }
     }
 }
