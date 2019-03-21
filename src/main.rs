@@ -57,6 +57,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mie, 0x888);
     csrs!(mstatus, STATUS_MPP_S);
     csrw!(mepc, sstart as u64);
+    csrw!(mcounteren, 0xffffffff);
 
     asm!("
 .align 4
@@ -137,26 +138,8 @@ unsafe fn sstart(_hartid: u64, device_tree_blob: u64) {
     let machine = fdt.process();
 
     // Initialize memory subsystem.
-    pmap::init(&machine);
-
+    let (page_table_region, guest_memory) = pmap::init(&machine);
     let fdt = Fdt::new(pa2va(device_tree_blob));
-
-    // Load guest binary
-    let (entry, max_addr) = sum::access_user_memory(||{
-        elf::load_elf(pa2va(machine.initrd_start) as *const u8,
-                      MPA.address_to_pointer(machine.gpm_offset))
-    });
-    let guest_dtb = (max_addr | 0x1fffff) + 1;
-    csrw!(sepc, entry);
-
-    // Load and mask guest FDT.
-    sum::access_user_memory(||{
-        core::ptr::copy(pa2va(device_tree_blob) as *const u8,
-                        MPA.address_to_pointer(guest_dtb),
-                        fdt.total_size() as usize);
-        let fdt = Fdt::new(MPA.address_to_pointer::<u8>(guest_dtb) as u64);
-        fdt.process();
-    });
 
     // Program PLIC
     for i in 1..127 { // priority
@@ -168,11 +151,28 @@ unsafe fn sstart(_hartid: u64, device_tree_blob: u64) {
     *(pa2va(0xc00208c) as *mut u32) = !0;         //    .
     *(pa2va(0x0c201000) as *mut u32) = 0;         // Hart 0 S-mode threshold
 
-    context::initialize(&machine);
+    // Load guest binary
+    let (entry, max_addr) = sum::access_user_memory(||{
+        elf::load_elf(pa2va(machine.initrd_start) as *const u8,
+                      pa2va(machine.gpm_offset + machine.guest_shift) as *mut u8)
+    });
+    let guest_dtb = (max_addr | 0x1fffff) + 1;
+    csrw!(sepc, entry);
 
-    csrw!(satp, MPA.satp());
-    asm!("sfence.vma" ::: "memory" : "volatile");
+    // Load and mask guest FDT.
+    sum::access_user_memory(||{
+        core::ptr::copy(pa2va(device_tree_blob) as *const u8,
+                        pa2va(guest_dtb + machine.guest_shift) as *mut u8,
+                        fdt.total_size() as usize);
+        let fdt = Fdt::new(pa2va(guest_dtb + machine.guest_shift));
+        fdt.process();
+    });
 
+    // Initialize context
+    context::initialize(&machine, page_table_region, guest_memory);
+
+    // csrw!(satp, MPA.satp());
+    // asm!("sfence.vma" ::: "memory" : "volatile");
 
     // Jump into the guest kernel.
     asm!("mv a1, $0 // dtb = guest_dtb
