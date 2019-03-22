@@ -12,16 +12,65 @@ RISC-V is [classically virtualizable](https://en.wikipedia.org/wiki/Popek_and_Go
 
 Why not? Rust is a pleasant language to work with and can directly target bare metal systems. Although I had hoped otherwise, safety turned out not to be a big factor as nearly all the code turned out to directly or indirectly rely on unsafe.
 
+## Installing dependencies
+
+ - rustup: https://rustup.rs/
+   - customize configuration to select the "nightly" build during setup.
+   - add the RISC-V target:
+
+         $ rustup target add riscv64imac-unknown-none-elf
+
+ - binutils (for cross-compilation):
+   - if it's available on your distro:
+
+         $ sudo apt-get install binutils-riscv64-linux-gnu
+
+   - if not:
+
+         $ wget https://ftp.gnu.org/gnu/binutils/binutils-2.32.tar.xz
+         $ tar -xf binutils-2.32.tar.xz binutils-2.32/
+         $ cd binutils-2.32/
+         $ ./configure --target=riscv64-unknown-elf --disable-nls
+         $ make
+         $ sudo make install
+
+     Rust looks for "riscv64-unknown-elf", so don't use any of the other variants.
+     I included --disable-nls for compilation speed; it's probably unnecessary.
+
+ - qemu:
+   - if the right version is available for your system (4.0.0-rc0 or greater):
+
+         $ sudo apt-get install qemu-system-misc
+
+   - if not:
+
+         $ wget https://download.qemu.org/qemu-4.0.0-rc0.tar.xz
+         $ tar -xf qemu-4.0.0-rc0.tar.xz qemu-4.0.0-rc0/
+         $ cd qemu-4.0.0-rc0
+         $ ./configure --target-list=riscv64-softmmu
+         $ make
+         $ sudo make install
+
 ## Instructions
 
-RVirt depends on a recent nightly version of rust installed via rustup, along with support for the `riscv64imac-unknown-none-elf` target. You will also need to install cross compilation tools for your system, which will include the `riscv64-unknown-elf-ld` linker.
+Download RVirt's source code:
 
-    $ sudo apt-get install binutils-riscv64-linux-gnu qemu-system-misc
-    $ git clone https://github.com/fintelia/rvirt && cd rvirt
-    $ rustup target add riscv64imac-unknown-none-elf
+    $ git clone https://github.com/fintelia/rvirt
+    $ cd rvirt
+
+Build RVirt:
+
     $ make release
 
-To actually run RVirt, you'll need a guest binary. Grab the Fedora `vmlinux` kernel binary and associated `stage4-disk.img` disk image from [here](https://fedorapeople.org/groups/risc-v/disk-images/) and place them in root of the repository. Now you can run with:
+You'll need guest binaries to run RVirt: a kernel binary (vmlinux) and a disk image (stage4-disk.img) from [here](https://fedorapeople.org/groups/risc-v/disk-images/).
+
+      # make sure to be in the root of the repository
+    $ wget https://fedorapeople.org/groups/risc-v/disk-images/vmlinux
+    $ mv vmlinux fedora-vmlinux
+    $ wget https://fedorapeople.org/groups/risc-v/disk-images/stage4-disk.img.xz
+    $ unxz stage4-disk.img.xz
+
+Now you can run with:
 
     $ make qemu-release
 
