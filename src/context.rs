@@ -5,7 +5,7 @@ use crate::pmap::{PageTables, PageTableRoot};
 use crate::memory_region::MemoryRegion;
 use crate::trap::constants::*;
 use crate::trap::U64Bits;
-use crate::{csr, pmap, print, virtio};
+use crate::{csr, pmap, print, trap, virtio};
 
 pub static CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
 
@@ -134,7 +134,12 @@ impl Context {
             csr::sedeleg => 0,
             csr::sideleg => 0,
             csr::scounteren => 0,
-            _ => return None,
+            csr::time if self.smode => trap::get_mtime(),
+            csr::time => unimplemented!(),
+            c => {
+                println!("Read from unrecognized CSR: {:#x}", c);
+                return None;
+            }
         })
     }
 
@@ -189,7 +194,10 @@ impl Context {
             csr::sedeleg |
             csr::sideleg |
             csr::scounteren => {}
-            _ => return false,
+            c => {
+                println!("Write to unrecognized CSR: {:#x}", c);
+                return false;
+            }
         }
 
         return true;

@@ -214,13 +214,17 @@ pub unsafe fn strap() {
                 set_register(state, i.rd(), prev);
             }
             Some(Instruction::Csrrs(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                let value = prev | get_register(state, i.rs1());
-                state.set_csr(i.csr(), value);
+                let mask = get_register(state, i.rs1());
+                if mask != 0 {
+                    state.set_csr(i.csr(), prev | mask);
+                }
                 set_register(state, i.rd(), prev);
             }
             Some(Instruction::Csrrc(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                let value = prev & !get_register(state, i.rs1());
-                state.set_csr(i.csr(), value);
+                let mask = get_register(state, i.rs1());
+                if mask != 0 {
+                    state.set_csr(i.csr(), prev & !mask);
+                }
                 set_register(state, i.rd(), prev);
             }
             Some(Instruction::Csrrwi(i)) => if let Some(prev) = state.get_csr(i.csr()) {
@@ -228,11 +232,17 @@ pub unsafe fn strap() {
                 set_register(state, i.rd(), prev);
             }
             Some(Instruction::Csrrsi(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                state.set_csr(i.csr(), prev | (i.zimm() as u64));
+                let mask = i.zimm() as u64;
+                if mask != 0 {
+                    state.set_csr(i.csr(), prev | mask);
+                }
                 set_register(state, i.rd(), prev);
             }
             Some(Instruction::Csrrci(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                state.set_csr(i.csr(), prev & !(i.zimm() as u64));
+                let mask = i.zimm() as u64;
+                if mask != 0 {
+                    state.set_csr(i.csr(), prev & !mask);
+                }
                 set_register(state, i.rd(), prev);
             }
             Some(decoded) => {
@@ -255,7 +265,7 @@ pub unsafe fn strap() {
         match get_register(state, 17) {
             0 => {
                 state.csrs.sip.set(IP_STIP, false);
-                state.csrs.mtimecmp = get_mtime() + get_register(state, 10);
+                state.csrs.mtimecmp = get_register(state, 10);
                 set_mtimecmp0(state.csrs.mtimecmp);
             }
             1 => print::guest_putchar(get_register(state, 10) as u8),
@@ -372,11 +382,6 @@ fn forward_exception(state: &mut Context, cause: u64, sepc: u64) {
 }
 
 pub fn set_register(state: &mut Context, reg: u32, value: u64) {
-    assert!((value) & 0xffff != 0x9e30);
-    assert!((value >> 2) & 0xffff != 0x9e30);
-    assert!((value >> 4) & 0xffff != 0x9e30);
-    assert!((value >> 6) & 0xffff != 0x9e30);
-
     match reg {
         0 => {},
         1 | 3..=31 => state.saved_registers[reg as u64 * 8] = value,
@@ -393,10 +398,10 @@ pub fn get_register(state: &mut Context, reg: u32) -> u64 {
     }
 }
 
-fn get_mtime() -> u64 {
+pub fn get_mtime() -> u64 {
     unsafe { *(pmap::pa2va(CLINT_ADDRESS + CLINT_MTIME_OFFSET) as *const u64) }
 }
-fn set_mtimecmp0(value: u64) {
+pub fn set_mtimecmp0(value: u64) {
     unsafe { *(pmap::pa2va(CLINT_ADDRESS + CLINT_MTIMECMP0_OFFSET) as *mut u64) = value; }
 }
 
