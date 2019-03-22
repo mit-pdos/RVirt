@@ -13,7 +13,7 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
     }
 
     let guest_va = csrr!(stval);
-    assert!((guest_va & SV39_MASK) < (511 << 30));
+    //assert!((guest_va & SV39_MASK) < (511 << 30));
 
     let access = match cause {
         12 => PTE_EXECUTE,

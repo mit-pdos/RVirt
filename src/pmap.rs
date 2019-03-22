@@ -112,6 +112,10 @@ impl PageTables {
     }
 
     pub fn set_mapping(&mut self, root: PageTableRoot, va: u64, pte: u64) {
+        if va >= DIRECT_MAP_OFFSET {
+            panic!("Guest attempted to access reserved virtual address: {:x}", va);
+        }
+
         let pte_addr = self.pte_for_addr(root, va);
         self.region.set_leaf_pte(pte_addr, pte);
     }
