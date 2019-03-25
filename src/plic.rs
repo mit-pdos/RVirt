@@ -28,10 +28,10 @@ impl PlicState {
             self.source_priority[offset as usize >> 2]
         } else if offset >= 0x1000 && offset <= 0x1014 {
             self.pending[offset as usize >> 2]
-        } else if offset >= 0x1000 && offset < 0x1000 + 0x1000 * MAX_HARTS as u64 {
-            let hart = (offset - 0x1000) / 0x1000;
-            let index = ((offset - 0x1000) & 0xfff) >> 2;
-            if index <= 14 {
+        } else if offset >= 0x2000 && offset < 0x2000 + 0x80 * MAX_HARTS as u64 {
+            let hart = (offset - 0x2000) / 0x80;
+            let index = ((offset - 0x2000) & 0x7f) >> 2;
+            if index <= 32 {
                 self.enable[hart as usize][index as usize]
             } else {
                 0
@@ -77,10 +77,11 @@ impl PlicState {
             self.source_priority[offset as usize >> 2] = value;
         } else if offset >= 0x1000 && offset <= 0x1014 {
             self.pending[offset as usize >> 2] = value;
-        } else if offset >= 0x1000 && offset < 0x1000 + 0x1000 * MAX_HARTS as u64 {
-            let hart = (offset - 0x1000) / 0x1000;
-            let index = ((offset - 0x1000) & 0xfff) >> 2;
-            if index <= 14 {
+        } else if offset >= 0x2000 && offset < 0x2000 + 0x80 * MAX_HARTS as u64 {
+            let hart = (offset - 0x2000) / 0x80;
+            let index = (((offset - 0x2000) & 0x7f) >> 2);
+
+            if index <= 32 {
                 self.enable[hart as usize][index as usize] = value;
             }
         } else if offset >= 0x200000 && offset < 0x200000 + 0x1000 * MAX_HARTS as u64 {
@@ -110,7 +111,7 @@ impl PlicState {
     }
 
     pub fn interrupt_pending(&self) -> bool {
-        const HART: usize = 0; // TODO: shouldn't be constant
+        const HART: usize = 1; // TODO: shouldn't be a constant
 
         let threshold = self.thresholds[HART];
         for i in 0..self.pending.len() {
