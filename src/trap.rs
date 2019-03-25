@@ -300,11 +300,22 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
             csrc!(sip, 1 << interrupt);
             assert_eq!(csrr!(sip) & (1 << interrupt), 0);
 
-            if state.csrs.mtimecmp <= get_mtime() {
+            let time = get_mtime();
+            crate::context::Uart::timer(state, time);
+            if state.csrs.mtimecmp <= time {
                 state.csrs.sip |= IP_STIP;
                 state.no_interrupt = false;
-            } else {
-                set_mtimecmp0(state.csrs.mtimecmp);
+            }
+
+            let mut next = 0xffffffff;
+            if state.uart.next_interrupt_time > time {
+                next = next.min(state.uart.next_interrupt_time);
+            }
+            if state.csrs.mtimecmp > time {
+                next = next.min(state.csrs.mtimecmp);
+            }
+            if next < 0xffffffff {
+                set_mtimecmp0(next);
             }
         }
         0x9 => unsafe {

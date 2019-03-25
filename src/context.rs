@@ -35,8 +35,17 @@ pub struct VirtIO {
 
 pub struct Uart {
     pub dlab: bool,
+
+    pub divisor_latch: u16,
     pub interrupt_enable: u8,
-    pub interrupt_id: u8,
+
+    pub next_interrupt_time: u64,
+
+    pub input_fifo: [u8; 16],
+    pub input_bytes_ready: usize,
+    // For some reason Linux ignores every other byte read from the UART? This field tracks whether
+    // the next read will be ignored (if so we return zero instead of the real character).
+    pub read_zero: bool,
 }
 
 pub struct Context {
@@ -72,18 +81,73 @@ impl ControlRegisters {
 }
 
 impl Uart {
+    fn tx_interrupt(&self, current_time: u64) -> bool {
+        self.next_interrupt_time  <= current_time && self.interrupt_enable & 0x2 != 0
+    }
+    fn rx_interrupt(&self) -> bool {
+        self.input_bytes_ready >= 1 && self.interrupt_enable & 0x1 != 0
+    }
+    pub fn timer(state: &mut Context, current_time: u64) {
+        state.uart.fill_fifo();
+        if state.uart.tx_interrupt(current_time) || state.uart.rx_interrupt() {
+            state.plic.set_pending(10, true);
+            state.no_interrupt = false;
+        }
+    }
+
+    pub fn fill_fifo(&mut self) {
+        while self.input_bytes_ready < self.input_fifo.len() {
+            if let Some(ch) = print::uart::getchar() {
+                self.input_fifo[self.input_bytes_ready] = ch;
+                self.input_bytes_ready += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
     pub fn read(&mut self, addr: u64) -> u8 {
         match (self.dlab, addr) {
-            (false, 0x10000000) => 0,
-            (false, 0x10000001) => 0, // Interrupt enable (top four should always be zero)
+            (false, 0x10000000) => {
+                if self.input_bytes_ready > 0 {
+                    if self.read_zero {
+                        self.read_zero = false;
+                        return 0;
+                    }
+                    self.read_zero = true;
+
+                    let ret = self.input_fifo[0];
+                    self.input_bytes_ready -= 1;
+                    for i in 0..(self.input_bytes_ready) {
+                        self.input_fifo[i] = self.input_fifo[i+1];
+                    }
+                    // println!("output = {}", ret as char);
+                    ret
+                } else {
+                    0
+                }
+            }
+            (false, 0x10000001) => self.interrupt_enable, // Interrupt enable (top four should always be zero)
             (_, 0x10000002) => { // Interrupt identification
-                let r = 0xc0 | self.interrupt_id;
-                self.interrupt_id = 0;
-                r
+                if self.rx_interrupt() {
+                    0xc4
+                } else if self.tx_interrupt(trap::get_mtime()) {
+                    0xc2
+                } else {
+                    0xc1
+                }
             },
             (true, 0x10000003) => 0x03,
             (false, 0x10000003) => 0x83,
-            (_, 0x10000005) => 0x30, // TODO: Change if data ready
+            (_, 0x10000005) => {
+                self.fill_fifo();
+                let input_mask = if self.input_bytes_ready > 0 { 0x1 } else { 0x0 };
+                if trap::get_mtime() >= self.next_interrupt_time {
+                    0x30 | input_mask
+                } else {
+                    0x0 | input_mask
+                }
+            }
             (_, 0x10000006) => 0x10, // Clear to send, other bits don't matter to Linux
             (dlab, _) => {
                 println!("UART: Read uimplemented ?? <- {:#x} (dlab={})", addr, dlab);
@@ -95,14 +159,22 @@ impl Uart {
         match (self.dlab, addr, value) {
             (false, 0x10000000, _) => {
                 print::guest_putchar(value);
-                if self.interrupt_enable & 0x2 != 0 {
-                    self.interrupt_id |= 0x2;
-                    plic.set_pending(10, true);
-                }
+
+                let current_time = trap::get_mtime();
+                let transmit_time = self.divisor_latch as u64 * 5;
+                self.next_interrupt_time =
+                    self.next_interrupt_time.max(current_time) + transmit_time;
             }
-            (true, 0x10000000, _) => {} // DLL divisor latch LSB
-            (false, 0x10000001, _) => self.interrupt_enable = value,
-            (true, 0x10000001, _) => {} // DLM divisor latch MSB
+            (false, 0x10000001, _) => {
+                let delta = value ^ self.interrupt_enable;
+                self.interrupt_enable = value;
+            }
+            (true, 0x10000000, _) => {
+                self.divisor_latch = (self.divisor_latch & 0xff00) | (value as u16);
+            }
+            (true, 0x10000001, _) => {
+                self.divisor_latch = (self.divisor_latch & 0x00ff) | ((value as u16) << 8);
+            }
             (_, 0x10000002, _) => {} // FIFO control
             (_, 0x10000003, _) => self.dlab = (value & 0x80) != 0,
             (_, 0x10000004, _) if value & 0xf0 == 0 => {} // Modem control
@@ -238,7 +310,11 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
         uart: Uart {
             dlab: false,
             interrupt_enable: 0,
-            interrupt_id: 0,
+            divisor_latch: 1,
+            next_interrupt_time: 0,
+            input_fifo: [0; 16],
+            input_bytes_ready: 0,
+            read_zero: true,
         },
         virtio: VirtIO {
             devices: [virtio::Device::new(); virtio::MAX_DEVICES],

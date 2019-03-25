@@ -24,6 +24,16 @@ pub mod uart {
             ptr::write_volatile(UART, ch)
         }
     }
+
+    pub fn getchar() -> Option<u8> {
+        unsafe {
+            if ptr::read_volatile(UART.offset(5)) & 0x01 != 0 {
+                Some(ptr::read_volatile(UART))
+            } else {
+                None
+            }
+        }
+    }
 }
 
 // see: https://os.phil-opp.com/printing-to-screen
