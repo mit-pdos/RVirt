@@ -195,16 +195,22 @@ impl Fdt {
                 FDT_BEGIN_NODE => {
                     indent += 1;
                     ptr = ptr.add(1);
-                    let name = self.str_from_ptr(ptr as *const u8);
-                    ptr = ptr.add(1 + name.len() / 4);
+                    let full_name = self.str_from_ptr(ptr as *const u8);
+                    ptr = ptr.add(1 + full_name.len() / 4);
+
+                    let mut name_parts = full_name.split('@');
+                    let node_name = name_parts.next().unwrap_or("");
+                    let unit_address = name_parts.next().unwrap_or("");
 
                     if indent == 2 {
-                        device_name = name.split('@').next().unwrap_or("");
+                        device_name = node_name;
                     }
 
                     if mask_node > 0 {
                         mask_node += 1;
-                    } else if name.split('@').next().unwrap_or("") == "pci" {
+                    } else if node_name == "pci" {
+                        mask_node = 1;
+                    } else if node_name == "cpu" && (unit_address != "" && unit_address != "0") {
                         mask_node = 1;
                     }
                 }

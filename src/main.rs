@@ -59,6 +59,11 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mepc, sstart as u64);
     csrw!(mcounteren, 0xffffffff);
 
+    if hartid > 0 {
+        // TODO: do something useful with extra cores
+        loop {}
+    }
+
     asm!("
 .align 4
           auipc t0, 0
