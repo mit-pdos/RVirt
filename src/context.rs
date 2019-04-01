@@ -127,6 +127,8 @@ impl Uart {
                     0
                 }
             }
+            (true, 0x10000000) => (self.divisor_latch & 0xff) as u8,
+            (true, 0x10000001) => (self.divisor_latch >> 8) as u8,
             (false, 0x10000001) => self.interrupt_enable, // Interrupt enable (top four should always be zero)
             (_, 0x10000002) => { // Interrupt identification
                 if self.rx_interrupt() {
