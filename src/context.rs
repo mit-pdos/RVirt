@@ -244,6 +244,11 @@ impl Context {
                 } else {
                     println!("Attempted to install page table with unsupported mode");
                 }
+                // This should not be necessary. The RISC-V spec says that if a program wants to
+                // flush the TLB after a page table swap it has to do so with a seperate
+                // sfence.vma. Unfortunately, Linux does not seem to respect this and segfaults if
+                // we don't flush here.
+                pmap::flush_shadow_page_table(&mut self.shadow_page_tables);
             }
             csr::sie => {
                 let value = value & (IE_SEIE | IE_STIE | IE_SSIE);
