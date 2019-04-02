@@ -32,10 +32,60 @@ use fdt::*;
 use trap::constants::*;
 use pmap::{pa2va, BOOT_PAGE_TABLE};
 
+/* mandatory rust environment setup */
+
 #[lang = "eh_personality"] extern fn eh_personality() {}
 #[panic_handler] fn panic(info: &::core::panic::PanicInfo) -> ! { println!("{}", info); loop {}}
 #[start] fn start(_argc: isize, _argv: *const *const u8) -> isize {0}
 #[no_mangle] pub fn abort() -> ! { println!("Abort!"); loop {}}
+
+/* Start-up sequence summary:
+ *  - QEMU loads hypervisor kernel (this program), linux kernel, initrd into memory
+ *  - QEMU launches hardcoded mrom reset vector, which jumps to _start via elf entrypoint
+ *  - _start sets up the stack and calls into mstart
+ *  - mstart implements the small portion of machine-mode code needed by the hypervisor
+ *  - mstart returns into supervisor-mode in sstart
+ *  - sstart returns into user-mode at the guest kernel entrypoint
+ *        (which is presumably emulated-supervisor-mode)
+ */
+
+/* Physical memory layout according to machine-mode
+ *   (see also linker.ld, pmap.rs, qemu riscv/virt.c @ 4717595)
+ *   note: although only 32 bits are described here, the address space is wider.
+ *  START      - END         REGION
+ *  0x       0 - 0x     100  QEMU VIRT_DEBUG
+ *  0x     100 - 0x    1000  unmapped
+ *  0x    1000 - 0x   12000  QEMU MROM (includes hard-coded reset vector; device tree)
+ *  0x   12000 - 0x  100000  unmapped
+ *  0x  100000 - 0x  101000  QEMU VIRT_TEST
+ *  0x  101000 - 0x 2000000  unmapped
+ *  0x 2000000 - 0x 2010000  QEMU VIRT_CLINT
+ *  0x 2010000 - 0x 3000000  unmapped
+ *  0x 3000000 - 0x 3010000  QEMU VIRT_PCIE_PIO
+ *  0x 3010000 - 0x c000000  unmapped
+ *  0x c000000 - 0x10000000  QEMU VIRT_PLIC
+ *  0x10000000 - 0x10000100  QEMU VIRT_UART0
+ *  0x10000100 - 0x10001000  unmapped
+ *  0x10001000 - 0x10002000  QEMU VIRT_VIRTIO
+ *  0x10002000 - 0x30000000  unmapped
+ *  0x30000000 - 0x40000000  QEMU
+ *  0x40000000 - 0x80000000  QEMU VIRT_PCIE_MMIO
+ *  0x80000000 - 0x80010000  space for .text.init (machine-mode code)
+ *  0x80010000 - 0x80017000  unused memory
+ *  0x80017000 - 0x80018000  boot page table (BOOT_PAGE_TABLE)
+ *  0x80018000 - 0x80100000  stack space for machine-mode init (not used in practice)
+ *  0x80100000 - 0x80200000  unused memory
+ *  0x80200000 - 0x80300000  space for hypervisor text/rodata/data/bss
+ *  0x80300000 - 0x80301000  scratch space for machine-mode trap
+ *  0x80301000 - 0x????????  unused memory
+ */
+
+/* Initial supervisor virtual memory layout (boot page table)
+ *    note: the Sv39 addressing mode is in use here
+ *  VIRTUAL START      - VIRTUAL END          PHYS START   PHYS END     MODE   REGION
+ *  0x00000000         - 0x        80000000   0x00000000 - 0x80000000   RWX    QEMU memory sections
+ *  0xffffffffc0000000 - 0xffffffffffffffff   0x80000000 - 0xC0000000   RWX    hypervisor memory
+ */
 
 #[naked]
 #[no_mangle]
