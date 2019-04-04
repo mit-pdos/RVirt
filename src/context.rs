@@ -43,9 +43,6 @@ pub struct Uart {
 
     pub input_fifo: [u8; 16],
     pub input_bytes_ready: usize,
-    // For some reason Linux ignores every other byte read from the UART? This field tracks whether
-    // the next read will be ignored (if so we return zero instead of the real character).
-    pub read_zero: bool,
 }
 
 pub struct Context {
@@ -149,18 +146,11 @@ impl Uart {
         match (self.dlab, addr) {
             (false, Uart::RECEIVE_BUFFER_REGISTER) => {
                 if self.input_bytes_ready > 0 {
-                    if self.read_zero {
-                        self.read_zero = false;
-                        return 0;
-                    }
-                    self.read_zero = true;
-
                     let ret = self.input_fifo[0];
                     self.input_bytes_ready -= 1;
                     for i in 0..(self.input_bytes_ready) {
                         self.input_fifo[i] = self.input_fifo[i+1];
                     }
-                    // println!("output = {}", ret as char);
                     ret
                 } else {
                     0
@@ -363,7 +353,6 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
             next_interrupt_time: 0,
             input_fifo: [0; 16],
             input_bytes_ready: 0,
-            read_zero: true,
         },
         virtio: VirtIO {
             devices: [virtio::Device::new(); virtio::MAX_DEVICES],
