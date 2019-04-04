@@ -81,6 +81,8 @@ impl ControlRegisters {
 }
 
 impl Uart {
+    const IRQ: u32 = 10;
+
     fn tx_interrupt(&self, current_time: u64) -> bool {
         self.next_interrupt_time  <= current_time && self.interrupt_enable & 0x2 != 0
     }
@@ -90,7 +92,7 @@ impl Uart {
     pub fn timer(state: &mut Context, current_time: u64) {
         state.uart.fill_fifo();
         if state.uart.tx_interrupt(current_time) || state.uart.rx_interrupt() {
-            state.plic.set_pending(10, true);
+            state.plic.set_pending(Uart::IRQ, true);
             state.no_interrupt = false;
         }
     }
@@ -106,9 +108,46 @@ impl Uart {
         }
     }
 
+    const TRANSMIT_HOLDING_REGISTER: u64 = 0x10000000;
+    const RECEIVE_BUFFER_REGISTER: u64 = 0x10000000;
+    const DIVISOR_LATCH_LSB: u64 = 0x10000000;
+    const INTERRUPT_ENABLE_REGISTER: u64 = 0x10000001;
+    const DIVISOR_LATCH_MSB: u64 = 0x10000001;
+    const FIFO_CONTROL_REGISTER: u64 = 0x10000002;
+    const INTERRUPT_IDENTIFICATION_REGISTER: u64 = 0x10000002;
+    const LINE_CONTROL_REGISTER: u64 = 0x10000003;
+    const MODEM_CONTROL_REGISTER: u64 = 0x10000004;
+    const LINE_STATUS_REGISTER: u64 = 0x10000005;
+    const MODEM_STATUS_REGISTER: u64 = 0x10000006;
+    const SCRATCH_REGISTER: u64 = 0x10000007;
+
+    // bits for interrupt identification register
+    const IIR_FIFOS_ENABLED: u8 = 0xC0;
+    const IIR_INTERRUPT_NOT_PENDING: u8 = 0x01; // set to zero for interrupt pending
+    // note: bits 1-3 are an enumeration as follows, not a bitmask
+    const IIR_TX_INTERRUPT: u8 = 0x02; // transmit fifo has room for more data
+    const IIR_RX_INTERRUPT: u8 = 0x04; // receive fifo contains data
+
+    // bits for line control register
+    const LCR_EIGHT_BIT_WORDS: u8 = 0x03; // eight bit words
+    const LCR_DIVISOR_LATCH_ACCESS: u8 = 0x80; // divisor latch access bit (DLAB)
+
+    // bits for line status register
+    const LSR_DATA_READY: u8 = 0x01;
+    const LSR_BREAK_INTERRUPT: u8 = 0x10;
+    const LSR_TRANSMITTER_HAS_ROOM: u8 = 0x20;
+    const LSR_TRANSMITTER_EMPTY: u8 = 0x40;
+
+    // bits for modem status register
+    const MSR_CLEAR_TO_SEND: u8 = 0x10;
+
+    // bits for modem control register
+    const MCR_LOOPBACK_ENABLE: u8 = 0x10;
+    const MCR_RESERVED_BITS: u8 = 0xe0;
+
     pub fn read(&mut self, addr: u64) -> u8 {
         match (self.dlab, addr) {
-            (false, 0x10000000) => {
+            (false, Uart::RECEIVE_BUFFER_REGISTER) => {
                 if self.input_bytes_ready > 0 {
                     if self.read_zero {
                         self.read_zero = false;
@@ -127,30 +166,33 @@ impl Uart {
                     0
                 }
             }
-            (true, 0x10000000) => (self.divisor_latch & 0xff) as u8,
-            (true, 0x10000001) => (self.divisor_latch >> 8) as u8,
-            (false, 0x10000001) => self.interrupt_enable, // Interrupt enable (top four should always be zero)
-            (_, 0x10000002) => { // Interrupt identification
+            (true, Uart::DIVISOR_LATCH_LSB) => (self.divisor_latch & 0xff) as u8,
+            (true, Uart::DIVISOR_LATCH_MSB) => (self.divisor_latch >> 8) as u8,
+            (false, Uart::INTERRUPT_ENABLE_REGISTER) => self.interrupt_enable, // (top four should always be zero)
+            (_, Uart::INTERRUPT_IDENTIFICATION_REGISTER) => {
                 if self.rx_interrupt() {
-                    0xc4
+                    Uart::IIR_FIFOS_ENABLED | Uart::IIR_RX_INTERRUPT
                 } else if self.tx_interrupt(trap::get_mtime()) {
-                    0xc2
+                    Uart::IIR_FIFOS_ENABLED | Uart::IIR_TX_INTERRUPT
                 } else {
-                    0xc1
+                    Uart::IIR_FIFOS_ENABLED | Uart::IIR_INTERRUPT_NOT_PENDING
                 }
             },
-            (true, 0x10000003) => 0x03,
-            (false, 0x10000003) => 0x83,
-            (_, 0x10000005) => {
+            (true, Uart::LINE_CONTROL_REGISTER) => Uart::LCR_EIGHT_BIT_WORDS,
+            (false, Uart::LINE_CONTROL_REGISTER) => Uart::LCR_EIGHT_BIT_WORDS | Uart::LCR_DIVISOR_LATCH_ACCESS,
+            (_, Uart::LINE_STATUS_REGISTER) => {
                 self.fill_fifo();
-                let input_mask = if self.input_bytes_ready > 0 { 0x1 } else { 0x0 };
-                if trap::get_mtime() >= self.next_interrupt_time {
-                    0x30 | input_mask
-                } else {
-                    0x0 | input_mask
+
+                let mut lsr = 0;
+                if self.input_bytes_ready > 0 {
+                    lsr |= Uart::LSR_DATA_READY;
                 }
+                if trap::get_mtime() >= self.next_interrupt_time {
+                    lsr |= Uart::LSR_TRANSMITTER_HAS_ROOM | Uart::LSR_BREAK_INTERRUPT;
+                }
+                lsr
             }
-            (_, 0x10000006) => 0x10, // Clear to send, other bits don't matter to Linux
+            (_, Uart::MODEM_STATUS_REGISTER) => Uart::MSR_CLEAR_TO_SEND, // other bits don't matter to Linux
             (dlab, _) => {
                 println!("UART: Read uimplemented ?? <- {:#x} (dlab={})", addr, dlab);
                 loop {}
@@ -159,7 +201,7 @@ impl Uart {
     }
     pub fn write(&mut self, plic: &mut PlicState, addr: u64, value: u8) {
         match (self.dlab, addr, value) {
-            (false, 0x10000000, _) => {
+            (false, Uart::TRANSMIT_HOLDING_REGISTER, _) => {
                 print::guest_putchar(value);
 
                 let current_time = trap::get_mtime();
@@ -167,19 +209,19 @@ impl Uart {
                 self.next_interrupt_time =
                     self.next_interrupt_time.max(current_time) + transmit_time;
             }
-            (false, 0x10000001, _) => {
+            (false, Uart::INTERRUPT_ENABLE_REGISTER, _) => {
                 let delta = value ^ self.interrupt_enable;
                 self.interrupt_enable = value;
             }
-            (true, 0x10000000, _) => {
+            (true, Uart::DIVISOR_LATCH_LSB, _) => {
                 self.divisor_latch = (self.divisor_latch & 0xff00) | (value as u16);
             }
-            (true, 0x10000001, _) => {
+            (true, Uart::DIVISOR_LATCH_MSB, _) => {
                 self.divisor_latch = (self.divisor_latch & 0x00ff) | ((value as u16) << 8);
             }
-            (_, 0x10000002, _) => {} // FIFO control
-            (_, 0x10000003, _) => self.dlab = (value & 0x80) != 0,
-            (_, 0x10000004, _) if value & 0xf0 == 0 => {} // Modem control
+            (_, Uart::FIFO_CONTROL_REGISTER, _) => {}
+            (_, Uart::LINE_CONTROL_REGISTER, _) => self.dlab = (value & Uart::LCR_DIVISOR_LATCH_ACCESS) != 0,
+            (_, Uart::MODEM_CONTROL_REGISTER, _) if value & (Uart::MCR_LOOPBACK_ENABLE | Uart::MCR_RESERVED_BITS) == 0 => {}
             _ => {
                 println!("UART: Write unimplemented {:#x} -> {:#x} (dlab={})",
                          value, addr, self.dlab);
