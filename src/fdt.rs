@@ -1,3 +1,4 @@
+use arrayvec::ArrayVec;
 
 const FDT_BEGIN_NODE: u32 = 0x01000000;
 const FDT_END_NODE: u32 = 0x02000000;
@@ -91,126 +92,117 @@ impl Fdt {
     }
 
     pub unsafe fn print(&self) {
-        // println!("total_size = {}", self.total_size());
-        // println!("version = {}", self.version());
-
-        let reservations = self.memory_reservations();
-        if reservations.len() > 0 {
-            println!("Reservations");
-            for r in reservations {
-                println!("   addr = {}", r.offset());
-                println!("   size = {}", r.size());
-            }
-        }
-
-        // println!("Strings...");
-        // let strings = self.strings();
-        // let mut indent = false;
-        // for s in strings {
-        //     if *s == 0 {
-        //         println!("");
-        //         indent = false;
-        //     } else {
-        //         if !indent {
-        //             print!("   ");
-        //             indent = true;
-        //         }
-        //         print!("{}", *s as char);
-        //     }
-        // }
-
-        let mut indent = 0;
-        let mut ptr = self.address().offset(self.off_dt_struct() as isize) as *const u32;
-        let end = ptr.offset((self.size_dt_struct() as isize + 3) / 4);
-        while ptr < end && *ptr != FDT_END {
-            match *ptr {
-                FDT_BEGIN_NODE => {
-                    ptr = ptr.add(1);
-                    let string = self.str_from_ptr(ptr as *const u8);
-
-                    ptr = ptr.add(1 + string.len() / 4);
-
-                    for _ in 0..indent { print!(" "); }
-                    println!("BeginNode {}", string);
-
-                    indent += 1;
+        self.walk(|path, unit_addresses, v| match v {
+            FdtVisit::Property { name, prop } => {
+                if path.len() == 1 {
+                    print!("[root]");
                 }
-                FDT_END_NODE => {
-                    indent -= 1;
-                    for _ in 0..indent { print!(" "); }
-                    println!("EndNode");
-                    ptr = ptr.offset(1);
-
-                }
-                FDT_PROP => {
-                    for _ in 0..indent { print!(" "); }
-                    let prop = &*(ptr.offset(1) as *const Property);
-                    let name = self.get_string(prop.name_offset());
-                    if prop.len() == 4 || prop.len() == 8 {
-                        println!("Property: name={}, value={:#x} ", name, prop.read_int());
-                    } else if prop.len() == 0 {
-                        println!("Property: name={}", name);
-                    } else if prop.len() == 16 {
-                        let range = prop.read_range();
-                        println!("Property: name={}, value={:x}:{:x} ", name, range.0, range.1);
-                    } else {
-                        if let Some(value) = prop.value_str() {
-                            println!("Property: name={}, value=\"{}\"", name, value);
-                        } else {
-                            println!("Property: name={}, value_len={} ", name, prop.len());
-                        }
+                for i in 1..path.len() {
+                    print!("/{}", path[i]);
+                    if unit_addresses[i] != "" {
+                        print!("@{}", unit_addresses[i]);
                     }
-                    ptr = ptr.offset(3 + (prop.len() as isize + 3) / 4);
                 }
-                FDT_NOP => {
-                    ptr = ptr.offset(1);
+                print!(":{}", name);
+
+                if prop.len() == 4 || prop.len() == 8 {
+                    println!("={:#x}", prop.read_int());
+                } else if prop.len() == 16 {
+                    let range = prop.read_range();
+                    println!("={:x}:{:x}", range.0, range.1);
+                } else if prop.len() != 0 {
+                    if let Some(value) = prop.value_str() {
+                        println!("=\"{}\"", value);
+                    } else {
+                        println!(" (value_len={})", prop.len());
+                    }
+                } else {
+                    println!("");
                 }
-                p => {
-                    for _ in 0..indent { print!(" "); }
-                    println!("Unknown: {:#x}", p);
-                    ptr = ptr.offset(1);
-                }
+                false
             }
-        }
+            FdtVisit::Node => {
+                false
+            }
+        });
     }
 
     // Mask out entries from FDT and return some information about the machine.
     pub unsafe fn process(&self, hart_base_pa: u64) -> MachineMeta {
         let mut initrd_start: Option<u64> = None;
         let mut initrd_end: Option<u64> = None;
+        let mut meta = MachineMeta::default();
 
-        let mut meta = MachineMeta {
-            .. Default::default()
-        };
+        self.walk(|path, unit_addresses, v| match v {
+            FdtVisit::Property { name, prop } => match (path, name) {
+                (["", "chosen"], "linux,initrd-end") => {
+                    initrd_end = Some(prop.read_int());
+                    true
+                }
+                (["", "chosen"], "linux,initrd-start") => {
+                    initrd_start = Some(prop.read_int());
+                    true
+                }
+                (["", "memory"], "reg") => {
+                    // TODO: Handle multiple memory regions
+                    assert_eq!(prop.len(), 16);
+                    let region = prop.address().offset(8) as *const _ as *mut MemoryRegion;
+                    meta.hpm_offset = (*region).offset();
+                    meta.hpm_size = (*region).size();
+                    meta.gpm_offset = meta.hpm_offset;
+                    meta.gpm_size = HART_SEGMENT_SIZE.checked_sub(VM_RESERVATION_SIZE).unwrap();
+                    meta.guest_shift = VM_RESERVATION_SIZE + hart_base_pa.checked_sub(meta.hpm_offset).unwrap();
+                    assert!(meta.gpm_size > 64 * 1024 * 1024);
 
+                    // May fail silently if FDT isn't writable
+                    (*region).size = meta.gpm_size.swap_bytes();
+                    false
+                }
+                _ => false,
+            }
+            FdtVisit::Node => match path {
+                ["", "cpus", "cpu"] => (unit_addresses[2] != "" && unit_addresses[2] != "0"),
+                ["", "pci"] => true,
+                _ => false,
+            }
+        });
+
+        if initrd_start.is_none() || initrd_end.is_none() {
+            println!("No guest kernel provided. Make sure to pass one with `-initrd ...`");
+            loop {}
+        }
+        meta.initrd_start = initrd_start.unwrap();
+        meta.initrd_end = initrd_end.unwrap();
+
+        meta
+    }
+
+    // Mask out entries from FDT and return some information about the machine.
+    unsafe fn walk<F>(&self, mut visit: F) where
+        F: FnMut(&[&str], &[&str], FdtVisit) -> bool,
+    {
         let mut mask_node = 0;
 
-        let mut indent = 0;
-        let mut device_name = "";
+        let mut path = ArrayVec::<[_; 16]>::new();
+        let mut unit_addresses = ArrayVec::<[_; 16]>::new();
+
         let mut ptr = self.address().offset(self.off_dt_struct() as isize) as *const u32;
         let end = ptr.offset((self.size_dt_struct() as isize + 3) / 4);
         while ptr < end && *ptr != FDT_END {
             let old_ptr = ptr;
             match *ptr {
                 FDT_BEGIN_NODE => {
-                    indent += 1;
                     ptr = ptr.add(1);
                     let full_name = self.str_from_ptr(ptr as *const u8);
                     ptr = ptr.add(1 + full_name.len() / 4);
 
                     let mut name_parts = full_name.split('@');
-                    let node_name = name_parts.next().unwrap_or("");
-                    let unit_address = name_parts.next().unwrap_or("");
-
-                    if indent == 2 {
-                        device_name = node_name;
-                    }
+                    path.push(name_parts.next().unwrap_or(""));
+                    unit_addresses.push(name_parts.next().unwrap_or(""));
 
                     if mask_node > 0 {
                         mask_node += 1;
-                    } else if node_name == "pci" {
-                        mask_node = 1;
-                    } else if node_name == "cpu" && (unit_address != "" && unit_address != "0") {
+                    } else if visit(&path, &unit_addresses, FdtVisit::Node) {
                         mask_node = 1;
                     }
                 }
@@ -219,44 +211,16 @@ impl Fdt {
                         *(ptr as *mut u32) = FDT_NOP;
                         mask_node = mask_node - 1;
                     }
-
-                    if indent == 2 {
-                        device_name = "";
-                    }
-                    indent -= 1;
+                    path.pop();
+                    unit_addresses.pop();
                     ptr = ptr.offset(1);
                 }
                 FDT_PROP => {
                     let prop = &*(ptr.offset(1) as *const Property);
                     let prop_name = self.get_string(prop.name_offset());
                     ptr = ptr.offset(3 + (prop.len() as isize + 3) / 4);
-
-                    if indent == 2 {
-                        match (device_name, prop_name) {
-                            ("chosen", "linux,initrd-end") => {
-                                initrd_end = Some(prop.read_int());
-                                prop.mask();
-                            }
-                            ("chosen", "linux,initrd-start") => {
-                                initrd_start = Some(prop.read_int());
-                                prop.mask();
-                            }
-                            ("memory", "reg") => {
-                                // TODO: Handle multiple memory regions
-                                assert_eq!(prop.len(), 16);
-                                let region = prop.address().offset(8) as *const _ as *mut MemoryRegion;
-                                meta.hpm_offset = (*region).offset();
-                                meta.hpm_size = (*region).size();
-                                meta.gpm_offset = meta.hpm_offset;
-                                meta.gpm_size = HART_SEGMENT_SIZE.checked_sub(VM_RESERVATION_SIZE).unwrap();
-                                meta.guest_shift = VM_RESERVATION_SIZE + hart_base_pa.checked_sub(meta.hpm_offset).unwrap();
-                                assert!(meta.gpm_size > 64 * 1024 * 1024);
-
-                                // May fail silently if FDT isn't writable
-                                (*region).size = meta.gpm_size.swap_bytes();
-                            }
-                            _ => {}
-                        }
+                    if visit(&path, &unit_addresses, FdtVisit::Property{ name: prop_name, prop }) {
+                        prop.mask();
                     }
                 }
                 FDT_NOP | _ => ptr = ptr.offset(1),
@@ -268,16 +232,6 @@ impl Fdt {
                 }
             }
         }
-
-        if initrd_start.is_none() || initrd_end.is_none() {
-            println!("No guest kernel provided. Make sure to pass one with `-initrd ...`");
-            loop {}
-        }
-
-        meta.initrd_start = initrd_start.unwrap();
-        meta.initrd_end = initrd_end.unwrap();
-
-        meta
     }
 }
 
@@ -335,5 +289,13 @@ impl Property {
             }
         }
         core::str::from_utf8(core::slice::from_raw_parts(self.address().add(8), self.len() as usize)).ok()
+    }
+}
+
+enum FdtVisit<'a> {
+    Node,
+    Property {
+        name: &'a str,
+        prop: &'a Property,
     }
 }
