@@ -119,51 +119,34 @@ impl Fdt {
                 } else {
                     println!("");
                 }
-                false
             }
-            FdtVisit::Node => {
-                false
-            }
+            FdtVisit::Node { .. } => {}
         });
     }
 
-    // Mask out entries from FDT and return some information about the machine.
-    pub unsafe fn process(&self, hart_base_pa: u64) -> MachineMeta {
+    pub unsafe fn parse(&self, hart_base_pa: u64) -> MachineMeta {
         let mut initrd_start: Option<u64> = None;
         let mut initrd_end: Option<u64> = None;
         let mut meta = MachineMeta::default();
 
-        self.walk(|path, unit_addresses, v| match v {
-            FdtVisit::Property { name, prop } => match (path, name) {
-                (["", "chosen"], "linux,initrd-end") => {
-                    initrd_end = Some(prop.read_int());
-                    true
+        self.walk(|path, unit_addresses, v| {
+            match v {
+                FdtVisit::Property { name, prop } => match (path, name) {
+                    (["", "chosen"], "linux,initrd-end") => initrd_end = Some(prop.read_int()),
+                    (["", "chosen"], "linux,initrd-start") => initrd_start = Some(prop.read_int()),
+                    (["", "memory"], "reg") => {
+                        assert_eq!(prop.len(), 16);
+                        let region = prop.address().offset(8) as *const _ as *mut MemoryRegion;
+                        meta.hpm_offset = (*region).offset();
+                        meta.hpm_size = (*region).size();
+                        meta.gpm_offset = meta.hpm_offset;
+                        meta.gpm_size = HART_SEGMENT_SIZE.checked_sub(VM_RESERVATION_SIZE).unwrap();
+                        meta.guest_shift = VM_RESERVATION_SIZE + hart_base_pa.checked_sub(meta.hpm_offset).unwrap();
+                        assert!(meta.gpm_size > 64 * 1024 * 1024);
+                    }
+                    _ => {},
                 }
-                (["", "chosen"], "linux,initrd-start") => {
-                    initrd_start = Some(prop.read_int());
-                    true
-                }
-                (["", "memory"], "reg") => {
-                    // TODO: Handle multiple memory regions
-                    assert_eq!(prop.len(), 16);
-                    let region = prop.address().offset(8) as *const _ as *mut MemoryRegion;
-                    meta.hpm_offset = (*region).offset();
-                    meta.hpm_size = (*region).size();
-                    meta.gpm_offset = meta.hpm_offset;
-                    meta.gpm_size = HART_SEGMENT_SIZE.checked_sub(VM_RESERVATION_SIZE).unwrap();
-                    meta.guest_shift = VM_RESERVATION_SIZE + hart_base_pa.checked_sub(meta.hpm_offset).unwrap();
-                    assert!(meta.gpm_size > 64 * 1024 * 1024);
-
-                    // May fail silently if FDT isn't writable
-                    (*region).size = meta.gpm_size.swap_bytes();
-                    false
-                }
-                _ => false,
-            }
-            FdtVisit::Node => match path {
-                ["", "cpus", "cpu"] => (unit_addresses[2] != "" && unit_addresses[2] != "0"),
-                ["", "pci"] => true,
-                _ => false,
+                FdtVisit::Node { .. } => {}
             }
         });
 
@@ -177,9 +160,28 @@ impl Fdt {
         meta
     }
 
+    pub unsafe fn mask(&self, guest_memory_size: u64) {
+        self.walk(|path, unit_addresses, v| match v {
+            FdtVisit::Property { name, prop } => match (path, name) {
+                (["", "chosen"], "linux,initrd-end") => prop.mask(),
+                (["", "chosen"], "linux,initrd-start") => prop.mask(),
+                (["", "memory"], "reg") => {
+                    let region = prop.address().offset(8) as *const _ as *mut MemoryRegion;
+                    (*region).size = guest_memory_size.swap_bytes()
+                }
+                _ => {},
+            }
+            FdtVisit::Node { mask } => *mask = match path {
+                ["", "cpus", "cpu"] => (unit_addresses[2] != "" && unit_addresses[2] != "0"),
+                ["", "pci"] => true,
+                _ => false,
+            },
+        });
+    }
+
     // Mask out entries from FDT and return some information about the machine.
     unsafe fn walk<F>(&self, mut visit: F) where
-        F: FnMut(&[&str], &[&str], FdtVisit) -> bool,
+        F: FnMut(&[&str], &[&str], FdtVisit),
     {
         let mut mask_node = 0;
 
@@ -202,8 +204,12 @@ impl Fdt {
 
                     if mask_node > 0 {
                         mask_node += 1;
-                    } else if visit(&path, &unit_addresses, FdtVisit::Node) {
-                        mask_node = 1;
+                    } else {
+                        let mut mask = false;
+                        visit(&path, &unit_addresses, FdtVisit::Node { mask: &mut mask });
+                        if mask {
+                            mask_node = 1;
+                        }
                     }
                 }
                 FDT_END_NODE => {
@@ -219,9 +225,7 @@ impl Fdt {
                     let prop = &*(ptr.offset(1) as *const Property);
                     let prop_name = self.get_string(prop.name_offset());
                     ptr = ptr.offset(3 + (prop.len() as isize + 3) / 4);
-                    if visit(&path, &unit_addresses, FdtVisit::Property{ name: prop_name, prop }) {
-                        prop.mask();
-                    }
+                    visit(&path, &unit_addresses, FdtVisit::Property{ name: prop_name, prop });
                 }
                 FDT_NOP | _ => ptr = ptr.offset(1),
             }
@@ -293,7 +297,7 @@ impl Property {
 }
 
 enum FdtVisit<'a> {
-    Node,
+    Node { mask: &'a mut bool },
     Property {
         name: &'a str,
         prop: &'a Property,

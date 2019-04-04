@@ -306,7 +306,8 @@ pub unsafe fn hart_entry(hartid: u64) {
     let fdt = Fdt::new(device_tree_blob);
     assert!(fdt.magic_valid());
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
-    let mut machine = fdt.process(hart_base_pa);
+    let mut machine = fdt.parse(hart_base_pa);
+    fdt.mask(machine.gpm_size);
 
     // Initialize memory subsystem.
     let (shadow_page_tables, guest_memory) = pmap::init(hart_base_pa, &machine);
