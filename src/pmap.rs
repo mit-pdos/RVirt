@@ -1,20 +1,12 @@
-use crate::fdt::{self, MachineMeta};
+use crate::fdt::MachineMeta;
 use crate::context::Context;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
-use crate::trap::MAX_IMAGE_PADDR;
-use crate::{riscv, sum};
-use core::ops::{Index, IndexMut};
+use crate::riscv;
 use core::ptr;
 use riscv_decode::Instruction;
-use spin::Mutex;
 
 const PAGE_SIZE: u64 = 4096;
 const HPAGE_SIZE: u64 = 2 * 1024 * 1024;
-
-const PAGE_TABLE_SHIFT: u32 = 9;
-
-pub const SV39_MASK: u64 = !((!0) << 39);
-
 
 #[allow(unused)]
 mod segment_layout {
@@ -161,7 +153,7 @@ impl PageTables {
 
         let mut page_table = self.root_pa(root);
         for level in 0..2 {
-            let pte_index = ((va >> (30 - PAGE_TABLE_SHIFT * level)) & 0x1ff);
+            let pte_index = (va >> (30 - 9 * level)) & 0x1ff;
             let pte_addr = page_table + pte_index * 8;
             let pte = self.region[pte_addr];
 
@@ -228,18 +220,6 @@ pub fn is_sv39(va: u64) -> bool {
     let shifted = va >> 38;
     shifted == 0 || shifted == 0x3ffffff
 }
-/// Returns whether va is a sign extended 48 bit address
-pub fn is_sv48(va: u64) -> bool {
-    let shifted = va >> 47;
-    shifted == 0 || shifted == 0x1ffff
-}
-
-#[allow(unused)]
-pub enum AccessType {
-    Read,
-    Write,
-    Execute,
-}
 
 pub struct AddressTranslation {
     pub pte_value: u64,
@@ -256,7 +236,7 @@ pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64
 
     let mut page_table = root_page_table;
     for level in 0..3 {
-        let pte_index = ((addr >> (30 - 9 * level)) & 0x1ff);
+        let pte_index = (addr >> (30 - 9 * level)) & 0x1ff;
         let pte_addr = page_table + pte_index * 8;
         let pte = guest_memory.get(pte_addr)?;
 

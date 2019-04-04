@@ -1,6 +1,6 @@
 use crate::context::Context;
 use crate::trap::{self, constants::SATP_PPN};
-use crate::{pmap::*, print, sum, virtio};
+use crate::{pmap::*, virtio};
 use riscv_decode::Instruction;
 
 /// Perform any handling required in response to a guest page fault. Returns true if the fault could

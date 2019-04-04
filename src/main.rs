@@ -207,8 +207,6 @@ continue:" ::: "t0"  : "volatile");
 
     const LXR: u64 = 0x9d; // Lock + Execute + Read
     const LRW: u64 = 0x9b; // Lock + Read + Write
-    const M_ONLY: u64 = 0x18;
-    const LOCKED: u64 = 0x80;
 
     // Text segment
     csrw!(pmpaddr0, pmpaddr(0x80000000, 2<<20));
@@ -302,7 +300,7 @@ pub unsafe fn hart_entry(hartid: u64, device_tree_blob: u64) {
     let fdt = Fdt::new(pa2va(device_tree_blob));
     assert!(fdt.magic_valid());
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
-    let mut machine = fdt.parse();
+    let machine = fdt.parse();
 
     // Initialize memory subsystem.
     let (shadow_page_tables, guest_memory, guest_shift) = pmap::init(hart_base_pa, &machine);

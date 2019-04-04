@@ -118,6 +118,7 @@ impl Uart {
     const MODEM_CONTROL_REGISTER: u64 = 0x10000004;
     const LINE_STATUS_REGISTER: u64 = 0x10000005;
     const MODEM_STATUS_REGISTER: u64 = 0x10000006;
+    #[allow(unused)]
     const SCRATCH_REGISTER: u64 = 0x10000007;
 
     // bits for interrupt identification register
@@ -133,6 +134,7 @@ impl Uart {
 
     // bits for line status register
     const LSR_DATA_READY: u8 = 0x01;
+    #[allow(unused)]
     const LSR_BREAK_INTERRUPT: u8 = 0x10;
     const LSR_TRANSMITTER_HAS_ROOM: u8 = 0x20;
     const LSR_TRANSMITTER_EMPTY: u8 = 0x40;
@@ -191,7 +193,7 @@ impl Uart {
             }
         }
     }
-    pub fn write(&mut self, plic: &mut PlicState, addr: u64, value: u8) {
+    pub fn write(&mut self, _plic: &mut PlicState, addr: u64, value: u8) {
         match (self.dlab, addr, value) {
             (false, Uart::TRANSMIT_HOLDING_REGISTER, _) => {
                 print::guest_putchar(value);
@@ -202,7 +204,6 @@ impl Uart {
                     self.next_interrupt_time.max(current_time) + transmit_time;
             }
             (false, Uart::INTERRUPT_ENABLE_REGISTER, _) => {
-                let delta = value ^ self.interrupt_enable;
                 self.interrupt_enable = value;
             }
             (true, Uart::DIVISOR_LATCH_LSB, _) => {
@@ -329,7 +330,7 @@ impl Context {
     }
 }
 
-pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, guest_memory: MemoryRegion, guest_shift: u64, hartid: u64) {
+pub unsafe fn initialize(_machine: &MachineMeta, shadow_page_tables: PageTables, guest_memory: MemoryRegion, guest_shift: u64, hartid: u64) {
     *CONTEXT.lock() = Some(Context{
         csrs: ControlRegisters{
             sstatus: 0,

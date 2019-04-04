@@ -79,7 +79,7 @@ impl PlicState {
             self.pending[offset as usize >> 2] = value;
         } else if offset >= 0x2000 && offset < 0x2000 + 0x80 * MAX_HARTS as u64 {
             let hart = (offset - 0x2000) / 0x80;
-            let index = (((offset - 0x2000) & 0x7f) >> 2);
+            let index = ((offset - 0x2000) & 0x7f) >> 2;
 
             if index <= 32 {
                 self.enable[hart as usize][index as usize] = value;
