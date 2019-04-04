@@ -188,7 +188,7 @@ impl Uart {
                     lsr |= Uart::LSR_DATA_READY;
                 }
                 if trap::get_mtime() >= self.next_interrupt_time {
-                    lsr |= Uart::LSR_TRANSMITTER_HAS_ROOM | Uart::LSR_BREAK_INTERRUPT;
+                    lsr |= Uart::LSR_TRANSMITTER_HAS_ROOM | Uart::LSR_TRANSMITTER_EMPTY;
                 }
                 lsr
             }
