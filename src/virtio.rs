@@ -84,7 +84,7 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
 
                 if value != 0 {
                     queue.guest_pa = (value as u64) << 12;
-                    value += (crate::fdt::VM_RESERVATION_SIZE >> 12) as u32;
+                    value += (state.guest_shift >> 12) as u32;
                     queue.host_pa = (value as u64) << 12;
                 } else {
                     unimplemented!();
@@ -103,7 +103,7 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
                     let ptr = (va + i * 16) as *mut u64;
                     let value = *ptr;
                     if value != 0 {
-                        *ptr = value.wrapping_add(crate::fdt::VM_RESERVATION_SIZE);
+                        *ptr = value.wrapping_add(state.guest_shift);
                     }
                     // println!("VQUEUE(create): [{}] addr={:#x} len={:#x} flags={:#x} next={:#x}",
                     //          i, *((va + i * 16) as *mut u64),
@@ -169,10 +169,9 @@ pub unsafe fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u
     }
 
     if hit_queue {
-        const OFFSET:u64 = crate::fdt::VM_RESERVATION_SIZE;
         match decoded.unwrap() {
             Instruction::Ld(i) => {
-                trap::set_register(state, i.rd(), (*(pmap::pa2va(host_pa) as *const u64)).wrapping_sub(OFFSET));
+                trap::set_register(state, i.rd(), (*(pmap::pa2va(host_pa) as *const u64)).wrapping_sub(state.guest_shift));
                 // println!("VQUEUE: ld {:#x}, ({:#x})", trap::get_register(state, i.rd()), host_pa);
             }
             Instruction::Sd(i) => {
@@ -180,7 +179,7 @@ pub unsafe fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u
                 if value == 0 {
                     *(pmap::pa2va(host_pa) as *mut u64) = 0;
                 } else if state.guest_memory.in_region(value) {
-                    *(pmap::pa2va(host_pa) as *mut u64) = value.wrapping_add(OFFSET);
+                    *(pmap::pa2va(host_pa) as *mut u64) = value.wrapping_add(state.guest_shift);
                 } else {
                     println!("VQUEUE: sd {:#x}, ({:#x}) Failed", value, host_pa);
                     loop {}

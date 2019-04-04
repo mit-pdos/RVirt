@@ -9,13 +9,11 @@ SECTIONS
     *(.text.init)
   }
 
-  /* reserve space for boot page tables */
-  ASSERT(. <= 0x80010000, "")
-
-  . = 0xffffffffc0200000;
-  .text : AT(0x80200000)
+  . = ALIGN(0x1000);
+  _text_pa = .;
+  . += 0xffffffff40000000;
+  .text : AT(_text_pa)
   {
-    *(.text.strap_entry)
     *(.text) *(.text.*)
     *(.gnu.linkonce.t.*)
   }
@@ -26,6 +24,12 @@ SECTIONS
     *(.gnu.linkonce.r.*)
   }
 
+  . = 0xffffffffc0200000;
+  .shared.data : {
+    *(.shared.data)
+  }
+
+  . = 0xffffffffc0400000;
   .data :
   {
     *(.data)
@@ -44,5 +48,5 @@ SECTIONS
     *(COMMON)
   }
 
-  ASSERT(. < 0xffffffffc0300000, "")
+  ASSERT(. < 0xffffffffc0600000, "")
 }

@@ -5,6 +5,7 @@ use spin::Mutex;
 pub mod uart {
     use core::ptr;
 
+    #[link_section = ".shared.data"]
     pub static mut UART: *mut u8 = 0x10000000 as *mut u8;
     pub fn enable() {
         unsafe { ptr::write_volatile(UART.offset(1), 0x00) }
@@ -60,6 +61,7 @@ impl fmt::Write for Writer {
     }
 }
 
+#[link_section = ".shared.data"]
 pub static WRITER: Mutex<Writer> = Mutex::new(Writer {initialized: false});
 
 macro_rules! print {

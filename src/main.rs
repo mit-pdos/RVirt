@@ -30,7 +30,7 @@ mod virtio;
 
 use fdt::*;
 use trap::constants::*;
-use pmap::{pa2va, BOOT_PAGE_TABLE};
+use pmap::{boot_page_table_pa, pa2va};
 
 /* mandatory rust environment setup */
 
@@ -51,33 +51,41 @@ use pmap::{pa2va, BOOT_PAGE_TABLE};
 
 /* Physical memory layout according to machine-mode
  *   (see also linker.ld, pmap.rs, qemu riscv/virt.c @ 4717595)
- *   note: although only 32 bits are described here, the address space is wider.
+ *   note: although only 36 bits are described here, the address space is wider.
  *  START      - END         REGION
- *  0x       0 - 0x     100  QEMU VIRT_DEBUG
- *  0x     100 - 0x    1000  unmapped
- *  0x    1000 - 0x   12000  QEMU MROM (includes hard-coded reset vector; device tree)
- *  0x   12000 - 0x  100000  unmapped
- *  0x  100000 - 0x  101000  QEMU VIRT_TEST
- *  0x  101000 - 0x 2000000  unmapped
- *  0x 2000000 - 0x 2010000  QEMU VIRT_CLINT
- *  0x 2010000 - 0x 3000000  unmapped
- *  0x 3000000 - 0x 3010000  QEMU VIRT_PCIE_PIO
- *  0x 3010000 - 0x c000000  unmapped
- *  0x c000000 - 0x10000000  QEMU VIRT_PLIC
- *  0x10000000 - 0x10000100  QEMU VIRT_UART0
- *  0x10000100 - 0x10001000  unmapped
- *  0x10001000 - 0x10002000  QEMU VIRT_VIRTIO
- *  0x10002000 - 0x30000000  unmapped
- *  0x30000000 - 0x40000000  QEMU
- *  0x40000000 - 0x80000000  QEMU VIRT_PCIE_MMIO
- *  0x80000000 - 0x80010000  space for .text.init (machine-mode code)
- *  0x80010000 - 0x80017000  unused memory
- *  0x80017000 - 0x80018000  boot page table (BOOT_PAGE_TABLE)
- *  0x80018000 - 0x80100000  stack space for machine-mode init (not used in practice)
- *  0x80100000 - 0x80200000  unused memory
- *  0x80200000 - 0x80300000  space for hypervisor text/rodata/data/bss
- *  0x80300000 - 0x80301000  scratch space for machine-mode trap
- *  0x80301000 - 0x????????  unused memory
+ *  0x        0 - 0x      100  QEMU VIRT_DEBUG
+ *  0x      100 - 0x     1000  unmapped
+ *  0x     1000 - 0x    12000  QEMU MROM (includes hard-coded reset vector; device tree)
+ *  0x    12000 - 0x   100000  unmapped
+ *  0x   100000 - 0x   101000  QEMU VIRT_TEST
+ *  0x   101000 - 0x  2000000  unmapped
+ *  0x  2000000 - 0x  2010000  QEMU VIRT_CLINT
+ *  0x  2010000 - 0x  3000000  unmapped
+ *  0x  3000000 - 0x  3010000  QEMU VIRT_PCIE_PIO
+ *  0x  3010000 - 0x  c000000  unmapped
+ *  0x  c000000 - 0x 10000000  QEMU VIRT_PLIC
+ *  0x 10000000 - 0x 10000100  QEMU VIRT_UART0
+ *  0x 10000100 - 0x 10001000  unmapped
+ *  0x 10001000 - 0x 10002000  QEMU VIRT_VIRTIO
+ *  0x 10002000 - 0x 30000000  unmapped
+ *  0x 30000000 - 0x 40000000  QEMU
+ *  0x 40000000 - 0x 80000000  QEMU VIRT_PCIE_MMIO
+ *  0x 80000000 - 0x 80200000  text segment
+ *  0x 80200000 - 0x 80400000  shared data
+ *  0x 80400000 - 0x 80600000  hart 0 data segment
+ *  0x 80600000 - 0x 80800000  hart 0 S-mode stack
+ *  0x c0000000 - 0x c0200000  hart 1 stack
+ *  0x c0200000 - 0x c0400000  hart 1 data segment
+ *  0x c0400000 - 0x c4000000  hart 1 page tables
+ *  0x c4000000 - 0x100000000  hart 1 guest memory
+ *  0x100000000 - 0x100200000  hart 2 stack
+ *  0x100200000 - 0x100400000  hart 2 data segment
+ *  0x100400000 - 0x104000000  hart 2 page tables
+ *  0x104000000 - 0x140000000  hart 2 guest memory
+ *  0x140000000 - 0x140200000  hart 3 stack
+ *  0x140200000 - 0x140400000  hart 3 data segment
+ *  0x140400000 - 0x144000000  hart 3 page tables
+ *  0x144000000 - 0x180000000  hart 3 guest memory
  */
 
 /* Initial supervisor virtual memory layout (boot page table)
@@ -91,7 +99,12 @@ use pmap::{pa2va, BOOT_PAGE_TABLE};
 #[no_mangle]
 #[link_section = ".text.init"]
 unsafe fn _start() {
-    asm!("li sp, 0x80100000" :::: "volatile");
+    asm!("li sp, 0x80a00000
+          beqz a0, stack_init_done
+          li sp, 0x80200000
+          slli t0, a0, 30
+          add sp, sp, t0
+          stack_init_done: " :::: "volatile");
 
     let hartid = reg!(a0);
     let device_tree_blob = reg!(a1);
@@ -109,11 +122,6 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mepc, sstart as u64);
     csrw!(mcounteren, 0xffffffff);
 
-    if hartid > 0 {
-        // TODO: do something useful with extra cores
-        loop {}
-    }
-
     asm!("
 .align 4
           auipc t0, 0
@@ -125,7 +133,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
 
 mtrap_entry:
           csrw 0x340, sp // mscratch
-          li sp, 0x80300000
+          li sp, 0x80110000
           sd t0, 0(sp)
           sd t1, 8(sp)
 
@@ -143,7 +151,17 @@ unknown_cause:
           j unknown_cause
 
 msoftware_interrupt:
-          j msoftware_interrupt
+          li t0, 0x02000004
+          sw zero, 0,(t0)
+
+          csrw 0x341, ra // mepc
+
+          li t0, 0x1000
+          csrc 0x300, t0 // mstatus.mpp[1] = 0
+
+          csrr a0, 0xf14 // mhartid
+
+          j return
 
 mtimer_interrupt:
           li t0, 0x80
@@ -152,9 +170,12 @@ mtimer_interrupt:
           li t0, 0x20
           csrs 0x144, t0 // sip.stip = 1
 
-          li t0, 0xffffffff
+          csrr t0, 0xf14 // mhartid
+          slli t0, t0, 3
           li t1, 0x2004000
-          sd t0, 0(t1)  // mtimecmp0 = -1
+          add t1, t0, t1
+          li t0, 0xffffffff
+          sd t0, 0(t1)  // mtimecmp[hartid] = -1
 
           j return
 
@@ -169,62 +190,144 @@ return:
 continue:" ::: "t0"  : "volatile");
 
     // Minimal page table to boot into S mode.
-    *({const C: u64 = BOOT_PAGE_TABLE; C} as *mut u64) = 0x00000000 | 0xcf;
-    *({const C: u64 = BOOT_PAGE_TABLE+16; C} as *mut u64) = 0x20000000 | 0xcf;
-    *({const C: u64 = BOOT_PAGE_TABLE+4088; C} as *mut u64) = 0x20000000 | 0xcf;
-    csrw!(satp, 8 << 60 | (BOOT_PAGE_TABLE >> 12));
+    *((boot_page_table_pa()) as *mut u64) = 0x00000000 | 0xcf;
+    *((boot_page_table_pa()+16) as *mut u64) = 0x20000000 | 0xcf;
+    *((boot_page_table_pa()+4088) as *mut u64) = 0x20000000 | 0xcf;
+    csrw!(satp, 8 << 60 | (boot_page_table_pa() >> 12));
 
-    asm!("mv a0, $1
-          mv a1, $0
-          mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1" : "volatile");
+    // Physical Memory Protection
+    fn pmpaddr(addr: u64, size: u64) -> u64 {
+        assert!(size.is_power_of_two());
+        assert!(size >= 16);
+        (addr + (size/16 - 1))
+    }
+
+    const LXR: u64 = 0x9d; // Lock + Execute + Read
+    const LRW: u64 = 0x9b; // Lock + Read + Write
+    const M_ONLY: u64 = 0x18;
+    const LOCKED: u64 = 0x80;
+
+    // Text segment
+    csrw!(pmpaddr0, pmpaddr(0x80000000, 2<<20));
+    csrs!(pmpcfg0, LXR);
+
+    // Shared data segment
+    csrw!(pmpaddr1, pmpaddr(0x80200000, 2<<20));
+    csrs!(pmpcfg0, LRW << 8);
+
+    // // M-mode stack
+    // csrw!(pmpaddr2, pmpaddr(0x80180000, 1<<19));
+    // csrs!(pmpcfg0, M_ONLY << 16);
+    // csrw!(pmpaddr3, pmpaddr(0x80200000 - (hartid+1) * 64*1024, 32*1024));
+    // csrs!(pmpcfg0, LRW << 24);
+    // csrw!(pmpaddr2, pmpaddr(0x80180000, 1<<19));
+    // csrs!(pmpcfg0, LOCKED << 32);
+
+    if hartid > 0 {
+        let base_address = (1 << 30) * (hartid + 2);
+        csrw!(satp, 8 << 60 | (base_address >> 12));
+        asm!("mv ra, $0
+              mv sp, $1" :: "r"(hart_entry as u64), "r"(base_address + (4<<20) + pmap::DIRECT_MAP_OFFSET) :: "volatile");
+        csrsi!(mstatus, 0x8); //MIE
+        loop {}
+    } else {
+        asm!("mv a0, $1
+              mv a1, $0
+              mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1" : "volatile");
+    }
 }
 
-unsafe fn sstart(_hartid: u64, device_tree_blob: u64) {
+const THREAD_CONTEXTS: [u64;4] = [
+    0x0c0000000,
+    0x100000000,
+    0x140000000,
+    0x180000000,
+];
+
+unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
+    assert_eq!(hartid, 0);
+
     asm!("li t0, 0xffffffff40000000
           add sp, sp, t0" ::: "t0" : "volatile");
     csrw!(stvec, crate::trap::strap_entry as *const () as u64);
-    csrw!(sie, 0x222);
+//    csrw!(sie, 0x222);
     csrs!(sstatus, trap::constants::STATUS_SUM);
 
     // Read and process host FDT.
     let fdt = Fdt::new(device_tree_blob);
     assert!(fdt.magic_valid());
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
-    let machine = fdt.process();
+    assert!(fdt.total_size() < 64 * 1024);
 
     // Initialize memory subsystem.
-    let (shadow_page_tables, guest_memory) = pmap::init(&machine);
+    pmap::monitor_init();
     let fdt = Fdt::new(pa2va(device_tree_blob));
 
     // Program PLIC
     for i in 1..127 { // priority
         *(pa2va(0xc000000 + i*4) as *mut u32) = 1;
     }
-    *(pa2va(0xc002080) as *mut u32) = 0xfffffffe; // Hart 0 enabled
-    *(pa2va(0xc002084) as *mut u32) = !0;         //    .
-    *(pa2va(0xc002088) as *mut u32) = !0;         //    .
-    *(pa2va(0xc00208c) as *mut u32) = !0;         //    .
-    *(pa2va(0x0c201000) as *mut u32) = 0;         // Hart 0 S-mode threshold
+    *(pa2va(0xc002180) as *mut u32) = 0xfffffffe; // Hart 1 enabled
+    *(pa2va(0xc002184) as *mut u32) = !0;         //    .
+    *(pa2va(0xc002188) as *mut u32) = !0;         //    .
+    *(pa2va(0xc00218c) as *mut u32) = !0;         //    .
+    *(pa2va(0x0c203000) as *mut u32) = 0;         // Hart 1 S-mode threshold
+
+    for i in 0..1 {
+        let thread_context = &mut *(pa2va(THREAD_CONTEXTS[i as usize]) as *mut ThreadContext);
+        thread_context.page_table.init();
+        core::ptr::copy(pa2va(device_tree_blob) as *const u8,
+                        thread_context.fdt.as_mut_ptr(),
+                        fdt.total_size() as usize);
+
+        *(pa2va(0x2000004 + i*4) as *mut u32) = 1;
+    }
+    loop {}
+
+}
+
+#[repr(C)]
+struct ThreadContext {
+    page_table: pmap::BootPageTable,
+    fdt: [u8; 64 * 1024],
+    stack: [u8; 32 * 1024],
+    payload: [u8; 32 * 1024 * 1024],
+}
+
+pub unsafe fn hart_entry(hartid: u64) {
+    csrw!(stvec, crate::trap::strap_entry as *const () as u64);
+    csrw!(sie, 0x222);
+    csrs!(sstatus, trap::constants::STATUS_SUM);
+
+    let hart_base_pa = (1 << 30) * (hartid + 2);
+    let device_tree_blob = pa2va(hart_base_pa + 4096);
+
+    // Read and process host FDT.
+    let fdt = Fdt::new(device_tree_blob);
+    assert!(fdt.magic_valid());
+    assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
+    let mut machine = fdt.process(hart_base_pa);
+
+    // Initialize memory subsystem.
+    let (shadow_page_tables, guest_memory) = pmap::init(hart_base_pa, &machine);
 
     // Load guest binary
     let (entry, max_addr) = sum::access_user_memory(||{
         elf::load_elf(pa2va(machine.initrd_start) as *const u8,
-                      pa2va(machine.gpm_offset + machine.guest_shift) as *mut u8)
+                      machine.gpm_offset as *mut u8)
     });
     let guest_dtb = (max_addr | 0x1fffff) + 1;
     csrw!(sepc, entry);
 
-    // Load and mask guest FDT.
+    // Load guest FDT.
     sum::access_user_memory(||{
-        core::ptr::copy(pa2va(device_tree_blob) as *const u8,
-                        pa2va(guest_dtb + machine.guest_shift) as *mut u8,
+        core::ptr::copy(device_tree_blob as *const u8,
+                        guest_dtb as *mut u8,
                         fdt.total_size() as usize);
-        let fdt = Fdt::new(pa2va(guest_dtb + machine.guest_shift));
-        fdt.process();
     });
 
     // Initialize context
-    context::initialize(&machine, shadow_page_tables, guest_memory);
+    context::initialize(&machine, shadow_page_tables, guest_memory, hartid);
 
     // Jump into the guest kernel.
     asm!("mv a1, $0 // dtb = guest_dtb

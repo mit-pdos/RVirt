@@ -62,6 +62,8 @@ pub struct Context {
 
     // If set, hypervisor exits do not need to check for pending interrupts
     pub no_interrupt: bool,
+
+    pub hartid: u64,
 }
 
 
@@ -327,7 +329,7 @@ impl Context {
     }
 }
 
-pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, guest_memory: MemoryRegion) {
+pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, guest_memory: MemoryRegion, hartid: u64) {
     *CONTEXT.lock() = Some(Context{
         csrs: ControlRegisters{
             sstatus: 0,
@@ -362,5 +364,6 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
         guest_shift: machine.guest_shift,
         smode: true,
         no_interrupt: true,
+        hartid,
     });
 }

@@ -5,7 +5,8 @@ const FDT_PROP: u32 = 0x03000000;
 const FDT_NOP: u32 = 0x04000000;
 const FDT_END: u32 = 0x09000000;
 
-pub const VM_RESERVATION_SIZE: u64 = 0x4000000; // 64MB
+const VM_RESERVATION_SIZE: u64 = 64 << 20; // 64MB
+const HART_SEGMENT_SIZE: u64 = 1 << 30; // 1 GB
 
 #[derive(Default)]
 pub struct MachineMeta {
@@ -174,12 +175,11 @@ impl Fdt {
     }
 
     // Mask out entries from FDT and return some information about the machine.
-    pub unsafe fn process(&self) -> MachineMeta {
+    pub unsafe fn process(&self, hart_base_pa: u64) -> MachineMeta {
         let mut initrd_start: Option<u64> = None;
         let mut initrd_end: Option<u64> = None;
 
         let mut meta = MachineMeta {
-            guest_shift: VM_RESERVATION_SIZE,
             .. Default::default()
         };
 
@@ -248,7 +248,8 @@ impl Fdt {
                                 meta.hpm_offset = (*region).offset();
                                 meta.hpm_size = (*region).size();
                                 meta.gpm_offset = meta.hpm_offset;
-                                meta.gpm_size = meta.hpm_size.checked_sub(VM_RESERVATION_SIZE as u64).unwrap();
+                                meta.gpm_size = HART_SEGMENT_SIZE.checked_sub(VM_RESERVATION_SIZE).unwrap();
+                                meta.guest_shift = VM_RESERVATION_SIZE + hart_base_pa.checked_sub(meta.hpm_offset).unwrap();
                                 assert!(meta.gpm_size > 64 * 1024 * 1024);
 
                                 // May fail silently if FDT isn't writable

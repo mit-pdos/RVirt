@@ -1,7 +1,7 @@
 use crate::fdt::{self, MachineMeta};
 use crate::context::Context;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
-use crate::trap::MAX_STACK_PADDR;
+use crate::trap::MAX_IMAGE_PADDR;
 use crate::{riscv, sum};
 use core::ops::{Index, IndexMut};
 use core::ptr;
@@ -28,18 +28,34 @@ mod pte_flags {
     pub const PTE_RSV_MASK: u64 = 0x300;
 
     pub const PTE_AD: u64 = PTE_ACCESSED | PTE_DIRTY;
+    pub const PTE_RWV: u64 = PTE_READ | PTE_WRITE | PTE_VALID;
+    pub const PTE_RXV: u64 = PTE_READ | PTE_EXECUTE | PTE_VALID;
     pub const PTE_RWXV: u64 = PTE_READ | PTE_WRITE | PTE_EXECUTE | PTE_VALID;
 }
 pub use pte_flags::*;
 
 mod page_table_constants {
-    pub const BOOT_PAGE_TABLE: u64 = 0x80017000;
-
     pub const DIRECT_MAP_PT_INDEX: u64 = 0xf80;
     pub const DIRECT_MAP_OFFSET: u64 = DIRECT_MAP_PT_INDEX << 27 | ((!0) << 39);
     pub const DIRECT_MAP_PAGES: u64 = 4; // Uses 1 GB pages
 }
 pub use page_table_constants::*;
+
+#[repr(C, align(4096))]
+pub struct BootPageTable([u64; 512]);
+impl BootPageTable {
+    pub fn init(&mut self) {
+        for i in 0..DIRECT_MAP_PAGES {
+            self.0[(DIRECT_MAP_PT_INDEX/8 + i) as usize] = (i << 28) | PTE_AD | PTE_RWXV;
+        }
+
+        self.0[511] = 0x20000000 | 0xcf;
+    }
+}
+static mut BOOT_PAGE_TABLE: BootPageTable = BootPageTable([0; 512]);
+pub fn boot_page_table_pa() -> u64 {
+    unsafe { &mut BOOT_PAGE_TABLE as *mut _ as u64 - 0xffffffff40000000 }
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum PageTableRoot {
@@ -246,39 +262,52 @@ pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64
     None
 }
 
-pub unsafe fn init(machine: &MachineMeta) -> (PageTables, MemoryRegion) {
+pub unsafe fn monitor_init() {
     // Setup direct map region in boot page table
     for i in 0..DIRECT_MAP_PAGES {
-        *((BOOT_PAGE_TABLE + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
+        *((boot_page_table_pa() + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
     }
+    crate::print::uart::UART = pa2va(crate::print::uart::UART as u64) as *mut _;
+
+    *((boot_page_table_pa()) as *mut u64) = 0;
+    *((boot_page_table_pa()+16) as *mut u64) = 0;
+
+    riscv::sfence_vma();
+}
+
+pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, MemoryRegion) {
+    assert_eq!(machine.gpm_offset, 0x80000000);
+    assert_eq!(hart_base_pa % (1<<30), 0);
 
     // Create guest memory region
     let guest_memory = MemoryRegion::with_base_address(
         pa2va(machine.gpm_offset + machine.guest_shift), machine.gpm_offset, machine.gpm_size);
 
     // Create shadow page tables
-    let memory_region_length = machine.hpm_offset + fdt::VM_RESERVATION_SIZE - MAX_STACK_PADDR;
-    let memory_region = MemoryRegion::new(pa2va(MAX_STACK_PADDR), memory_region_length);
+    let memory_region_length = 2*machine.hpm_offset + machine.guest_shift - hart_base_pa - MAX_IMAGE_PADDR;
+    let memory_region = MemoryRegion::new(pa2va(MAX_IMAGE_PADDR) + (hart_base_pa - machine.hpm_offset), memory_region_length);
     let mut shadow_page_tables = PageTables::new(memory_region, machine.initrd_start, machine.initrd_end);
 
     // Initialize shadow page tables
     for &root in &[MPA, UVA, KVA, MVA] {
-        let pa = shadow_page_tables.root_pa(root);
-        ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE as usize);
+        let va = pa2va(shadow_page_tables.root_pa(root));
+        ptr::write_bytes(va as *mut u8, 0, PAGE_SIZE as usize);
 
-        // Direct map region
-        for i in 0..DIRECT_MAP_PAGES {
-            *((pa + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
-        }
+        *((va + DIRECT_MAP_PT_INDEX + 0 * 8) as *mut u64) = (0 << 28) | PTE_AD | PTE_RWV;
+        *((va + DIRECT_MAP_PT_INDEX + 1 * 8) as *mut u64) = (1 << 28) | PTE_AD | PTE_RWV;
+        *((va + DIRECT_MAP_PT_INDEX + 2 * 8) as *mut u64) = (2 << 28) | PTE_AD | PTE_RWV; // TODO: don't map this page
+        *((va + DIRECT_MAP_PT_INDEX + (hart_base_pa >> 30) * 8) as *mut u64) = (hart_base_pa >> 2) | PTE_AD | PTE_RWV;
 
         // Hypervisor code + data
-        *((pa + 0xff8) as *mut u64) = 0x20000000 | PTE_AD | PTE_RWXV;
+        let hp = 2 << 18;
+        let page = shadow_page_tables.alloc_page();
+        *((va + 0xff8) as *mut u64) = (page >> 2) | PTE_VALID;
+        shadow_page_tables.region.set_pte_unchecked(page, 0x20000000 | PTE_AD | PTE_READ | PTE_EXECUTE | PTE_VALID);              // Code + read only data
+        shadow_page_tables.region.set_pte_unchecked(page+8, (0x20000000+hp) | PTE_AD | PTE_READ | PTE_WRITE | PTE_VALID);         // Shared data
+        shadow_page_tables.region.set_pte_unchecked(page+16, ((hart_base_pa>>2)) | PTE_AD | PTE_READ | PTE_WRITE | PTE_VALID);    // Data
+        shadow_page_tables.region.set_pte_unchecked(page+32, ((hart_base_pa>>2)+hp) | PTE_AD | PTE_READ | PTE_WRITE | PTE_VALID); // Stack
     }
-
     shadow_page_tables.install_root(MPA);
-    crate::print::uart::UART = pa2va(crate::print::uart::UART as u64) as *mut _;
-
-    assert_eq!(machine.gpm_offset, 0x80000000);
 
     // Map guest physical memory
     assert_eq!(machine.gpm_size % HPAGE_SIZE, 0);
