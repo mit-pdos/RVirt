@@ -6,20 +6,10 @@ const FDT_PROP: u32 = 0x03000000;
 const FDT_NOP: u32 = 0x04000000;
 const FDT_END: u32 = 0x09000000;
 
-const VM_RESERVATION_SIZE: u64 = 64 << 20; // 64MB
-const HART_SEGMENT_SIZE: u64 = 1 << 30; // 1 GB
-
 #[derive(Default)]
 pub struct MachineMeta {
-    // Host physical memory
-    pub hpm_offset: u64,
-    pub hpm_size: u64,
-
-    // Guest physical memory
-    pub gpm_offset: u64,
-    pub gpm_size: u64,
-
-    pub guest_shift: u64,
+    pub physical_memory_offset: u64,
+    pub physical_memory_size: u64,
 
     pub initrd_start: u64,
     pub initrd_end: u64,
@@ -124,7 +114,7 @@ impl Fdt {
         });
     }
 
-    pub unsafe fn parse(&self, hart_base_pa: u64) -> MachineMeta {
+    pub unsafe fn parse(&self) -> MachineMeta {
         let mut initrd_start: Option<u64> = None;
         let mut initrd_end: Option<u64> = None;
         let mut meta = MachineMeta::default();
@@ -137,12 +127,8 @@ impl Fdt {
                     (["", "memory"], "reg") => {
                         assert_eq!(prop.len(), 16);
                         let region = prop.address().offset(8) as *const _ as *mut MemoryRegion;
-                        meta.hpm_offset = (*region).offset();
-                        meta.hpm_size = (*region).size();
-                        meta.gpm_offset = meta.hpm_offset;
-                        meta.gpm_size = HART_SEGMENT_SIZE.checked_sub(VM_RESERVATION_SIZE).unwrap();
-                        meta.guest_shift = VM_RESERVATION_SIZE + hart_base_pa.checked_sub(meta.hpm_offset).unwrap();
-                        assert!(meta.gpm_size > 64 * 1024 * 1024);
+                        meta.physical_memory_offset = (*region).offset();
+                        meta.physical_memory_size = (*region).size();
                     }
                     _ => {},
                 }

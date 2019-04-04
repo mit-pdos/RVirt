@@ -15,6 +15,9 @@ const PAGE_TABLE_SHIFT: u32 = 9;
 
 pub const SV39_MASK: u64 = !((!0) << 39);
 
+const VM_RESERVATION_SIZE: u64 = 64 << 20; // 64MB
+const HART_SEGMENT_SIZE: u64 = 1 << 30; // 1 GB
+
 #[allow(unused)]
 mod pte_flags {
     pub const PTE_VALID: u64 = 0x1;
@@ -275,17 +278,21 @@ pub unsafe fn monitor_init() {
     riscv::sfence_vma();
 }
 
-pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, MemoryRegion) {
-    assert_eq!(machine.gpm_offset, 0x80000000);
-    assert_eq!(hart_base_pa % (1<<30), 0);
+pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, MemoryRegion, u64) {
+    assert_eq!(hart_base_pa % HART_SEGMENT_SIZE, 0);
+
+    let gpm_offset = machine.physical_memory_offset;
+    let gpm_size = HART_SEGMENT_SIZE.checked_sub(VM_RESERVATION_SIZE).unwrap();
+    let guest_shift = VM_RESERVATION_SIZE + hart_base_pa.checked_sub(machine.physical_memory_offset).unwrap();
+    assert_eq!(gpm_offset, 0x80000000);
+    assert!(gpm_size > 64 * 1024 * 1024);
 
     // Create guest memory region
-    let guest_memory = MemoryRegion::with_base_address(
-        pa2va(machine.gpm_offset + machine.guest_shift), machine.gpm_offset, machine.gpm_size);
+    let guest_memory = MemoryRegion::with_base_address(pa2va(gpm_offset + guest_shift), gpm_offset, gpm_size);
 
     // Create shadow page tables
-    let memory_region_length = 2*machine.hpm_offset + machine.guest_shift - hart_base_pa - MAX_IMAGE_PADDR;
-    let memory_region = MemoryRegion::new(pa2va(MAX_IMAGE_PADDR) + (hart_base_pa - machine.hpm_offset), memory_region_length);
+    let memory_region_length = 2*machine.physical_memory_offset + guest_shift - hart_base_pa - MAX_IMAGE_PADDR;
+    let memory_region = MemoryRegion::new(pa2va(MAX_IMAGE_PADDR) + (hart_base_pa - machine.physical_memory_offset), memory_region_length);
     let mut shadow_page_tables = PageTables::new(memory_region, machine.initrd_start, machine.initrd_end);
 
     // Initialize shadow page tables
@@ -310,12 +317,12 @@ pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, Mem
     shadow_page_tables.install_root(MPA);
 
     // Map guest physical memory
-    assert_eq!(machine.gpm_size % HPAGE_SIZE, 0);
+    assert_eq!(gpm_size % HPAGE_SIZE, 0);
     let root_pa = shadow_page_tables.root_pa(MPA);
-    let npages = machine.gpm_size / HPAGE_SIZE;
+    let npages = gpm_size / HPAGE_SIZE;
     for p in 0..npages  {
-        let va = machine.gpm_offset + p * HPAGE_SIZE;
-        let pa = va + machine.guest_shift;
+        let va = gpm_offset + p * HPAGE_SIZE;
+        let pa = va + guest_shift;
 
         let pte_index = va >> 30;
         let pte_addr = root_pa + pte_index * 8;
@@ -332,7 +339,7 @@ pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, Mem
                                                (pa >> 2) | PTE_AD | PTE_USER | PTE_RWXV);
     }
 
-    (shadow_page_tables, guest_memory)
+    (shadow_page_tables, guest_memory, guest_shift)
 }
 
 #[allow(unused)]

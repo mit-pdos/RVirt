@@ -329,7 +329,7 @@ impl Context {
     }
 }
 
-pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, guest_memory: MemoryRegion, hartid: u64) {
+pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, guest_memory: MemoryRegion, guest_shift: u64, hartid: u64) {
     *CONTEXT.lock() = Some(Context{
         csrs: ControlRegisters{
             sstatus: 0,
@@ -361,7 +361,7 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
             queue_guest_pages: [0; virtio::MAX_DEVICES * virtio::MAX_QUEUES],
             num_queue_guest_pages: 0,
         },
-        guest_shift: machine.guest_shift,
+        guest_shift,
         smode: true,
         no_interrupt: true,
         hartid,

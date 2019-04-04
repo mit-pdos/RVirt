@@ -306,16 +306,15 @@ pub unsafe fn hart_entry(hartid: u64) {
     let fdt = Fdt::new(device_tree_blob);
     assert!(fdt.magic_valid());
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
-    let mut machine = fdt.parse(hart_base_pa);
-    fdt.mask(machine.gpm_size);
+    let mut machine = fdt.parse();
 
     // Initialize memory subsystem.
-    let (shadow_page_tables, guest_memory) = pmap::init(hart_base_pa, &machine);
+    let (shadow_page_tables, guest_memory, guest_shift) = pmap::init(hart_base_pa, &machine);
 
     // Load guest binary
     let (entry, max_addr) = sum::access_user_memory(||{
         elf::load_elf(pa2va(machine.initrd_start) as *const u8,
-                      machine.gpm_offset as *mut u8)
+                      machine.physical_memory_offset as *mut u8)
     });
     let guest_dtb = (max_addr | 0x1fffff) + 1;
     csrw!(sepc, entry);
@@ -325,10 +324,12 @@ pub unsafe fn hart_entry(hartid: u64) {
         core::ptr::copy(device_tree_blob as *const u8,
                         guest_dtb as *mut u8,
                         fdt.total_size() as usize);
+        let guest_fdt = Fdt::new(guest_dtb);
+        guest_fdt.mask(guest_memory.len());
     });
 
     // Initialize context
-    context::initialize(&machine, shadow_page_tables, guest_memory, hartid);
+    context::initialize(&machine, shadow_page_tables, guest_memory, guest_shift, hartid);
 
     // Jump into the guest kernel.
     asm!("mv a1, $0 // dtb = guest_dtb
