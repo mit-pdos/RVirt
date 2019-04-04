@@ -76,15 +76,18 @@ use pmap::{boot_page_table_pa, pa2va};
  *  0x 80600000 - 0x 80800000  hart 0 S-mode stack
  *  0x c0000000 - 0x c0200000  hart 1 stack
  *  0x c0200000 - 0x c0400000  hart 1 data segment
- *  0x c0400000 - 0x c4000000  hart 1 page tables
+ *  0x c0400000 - 0x c4000000  hart 1 heap
+ *  0x c2000000 - 0x c4000000  hart 1 page tables
  *  0x c4000000 - 0x100000000  hart 1 guest memory
  *  0x100000000 - 0x100200000  hart 2 stack
  *  0x100200000 - 0x100400000  hart 2 data segment
- *  0x100400000 - 0x104000000  hart 2 page tables
+ *  0x100400000 - 0x104000000  hart 2 heap
+ *  0x102000000 - 0x104000000  hart 2 page tables
  *  0x104000000 - 0x140000000  hart 2 guest memory
  *  0x140000000 - 0x140200000  hart 3 stack
  *  0x140200000 - 0x140400000  hart 3 data segment
- *  0x140400000 - 0x144000000  hart 3 page tables
+ *  0x140400000 - 0x144000000  hart 3 heap
+ *  0x142000000 - 0x144000000  hart 3 page tables
  *  0x144000000 - 0x180000000  hart 3 guest memory
  */
 
@@ -227,7 +230,8 @@ continue:" ::: "t0"  : "volatile");
         let base_address = (1 << 30) * (hartid + 2);
         csrw!(satp, 8 << 60 | (base_address >> 12));
         asm!("mv ra, $0
-              mv sp, $1" :: "r"(hart_entry as u64), "r"(base_address + (4<<20) + pmap::DIRECT_MAP_OFFSET) :: "volatile");
+              mv sp, $1
+              mv a1, $2" :: "r"(hart_entry as u64), "r"(base_address + (4<<20) + pmap::DIRECT_MAP_OFFSET), "r"(base_address+4096) :: "volatile");
         csrsi!(mstatus, 0x8); //MIE
         loop {}
     } else {
@@ -236,13 +240,6 @@ continue:" ::: "t0"  : "volatile");
               mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1" : "volatile");
     }
 }
-
-const THREAD_CONTEXTS: [u64;4] = [
-    0x0c0000000,
-    0x100000000,
-    0x140000000,
-    0x180000000,
-];
 
 unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     assert_eq!(hartid, 0);
@@ -262,6 +259,9 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     // Initialize memory subsystem.
     pmap::monitor_init();
     let fdt = Fdt::new(pa2va(device_tree_blob));
+    let machine = fdt.parse();
+    assert!(machine.initrd_end <= machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE);
+    assert!(machine.initrd_end - machine.initrd_start <= pmap::HEAP_SIZE);
 
     // Program PLIC
     for i in 1..127 { // priority
@@ -273,37 +273,33 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     *(pa2va(0xc00218c) as *mut u32) = !0;         //    .
     *(pa2va(0x0c203000) as *mut u32) = 0;         // Hart 1 S-mode threshold
 
-    for i in 0..1 {
-        let thread_context = &mut *(pa2va(THREAD_CONTEXTS[i as usize]) as *mut ThreadContext);
-        thread_context.page_table.init();
-        core::ptr::copy(pa2va(device_tree_blob) as *const u8,
-                        thread_context.fdt.as_mut_ptr(),
-                        fdt.total_size() as usize);
+    for i in 1..2 {
+        let hart_base_pa = machine.physical_memory_offset + i * pmap::HART_SEGMENT_SIZE;
 
-        *(pa2va(0x2000004 + i*4) as *mut u32) = 1;
+        (*(pa2va(hart_base_pa) as *mut pmap::BootPageTable)).init();
+        core::ptr::copy(pa2va(device_tree_blob) as *const u8,
+                        pa2va(hart_base_pa + 4096) as *mut u8,
+                        fdt.total_size() as usize);
+        core::ptr::copy(pa2va(machine.initrd_start) as *const u8,
+                        pa2va(hart_base_pa + pmap::HEAP_OFFSET) as *mut u8,
+                        (machine.initrd_end - machine.initrd_start) as usize);
+
+        // Send IPI
+        *(pa2va(0x2000000 + i*4) as *mut u32) = 1;
     }
     loop {}
 
 }
 
-#[repr(C)]
-struct ThreadContext {
-    page_table: pmap::BootPageTable,
-    fdt: [u8; 64 * 1024],
-    stack: [u8; 32 * 1024],
-    payload: [u8; 32 * 1024 * 1024],
-}
-
-pub unsafe fn hart_entry(hartid: u64) {
+pub unsafe fn hart_entry(hartid: u64, device_tree_blob: u64) {
     csrw!(stvec, crate::trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
     csrs!(sstatus, trap::constants::STATUS_SUM);
 
     let hart_base_pa = (1 << 30) * (hartid + 2);
-    let device_tree_blob = pa2va(hart_base_pa + 4096);
 
     // Read and process host FDT.
-    let fdt = Fdt::new(device_tree_blob);
+    let fdt = Fdt::new(pa2va(device_tree_blob));
     assert!(fdt.magic_valid());
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
     let mut machine = fdt.parse();
@@ -313,7 +309,7 @@ pub unsafe fn hart_entry(hartid: u64) {
 
     // Load guest binary
     let (entry, max_addr) = sum::access_user_memory(||{
-        elf::load_elf(pa2va(machine.initrd_start) as *const u8,
+        elf::load_elf(pa2va(hart_base_pa + pmap::HEAP_OFFSET) as *const u8,
                       machine.physical_memory_offset as *mut u8)
     });
     let guest_dtb = (max_addr | 0x1fffff) + 1;
@@ -321,7 +317,7 @@ pub unsafe fn hart_entry(hartid: u64) {
 
     // Load guest FDT.
     sum::access_user_memory(||{
-        core::ptr::copy(device_tree_blob as *const u8,
+        core::ptr::copy(pa2va(device_tree_blob) as *const u8,
                         guest_dtb as *mut u8,
                         fdt.total_size() as usize);
         let guest_fdt = Fdt::new(guest_dtb);

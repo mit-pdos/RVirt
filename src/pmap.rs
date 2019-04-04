@@ -15,8 +15,21 @@ const PAGE_TABLE_SHIFT: u32 = 9;
 
 pub const SV39_MASK: u64 = !((!0) << 39);
 
-const VM_RESERVATION_SIZE: u64 = 64 << 20; // 64MB
-const HART_SEGMENT_SIZE: u64 = 1 << 30; // 1 GB
+
+#[allow(unused)]
+mod segment_layout {
+    pub const HART_SEGMENT_SIZE: u64 = 1 << 30; // 1 GB
+    pub const DATA_OFFSET: u64 = 0;
+    pub const DATA_SIZE: u64 = 2 << 20;
+    pub const STACK_OFFSET: u64 = DATA_OFFSET + DATA_SIZE;
+    pub const STACK_SIZE: u64 = 2 << 20;
+    pub const HEAP_OFFSET: u64 = STACK_OFFSET + STACK_SIZE;
+    pub const HEAP_SIZE: u64 = 28 << 20;
+    pub const PT_REGION_OFFSET: u64 = HEAP_OFFSET + HEAP_SIZE;
+    pub const PT_REGION_SIZE: u64 = 32 << 20;
+    pub const VM_RESERVATION_SIZE: u64 = PT_REGION_OFFSET + PT_REGION_SIZE; // 64MB
+}
+pub use segment_layout::*;
 
 #[allow(unused)]
 mod pte_flags {
@@ -288,11 +301,10 @@ pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, Mem
     assert!(gpm_size > 64 * 1024 * 1024);
 
     // Create guest memory region
-    let guest_memory = MemoryRegion::with_base_address(pa2va(gpm_offset + guest_shift), gpm_offset, gpm_size);
+    let guest_memory = MemoryRegion::with_base_address(pa2va(gpm_offset + guest_shift), machine.physical_memory_offset, gpm_size);
 
     // Create shadow page tables
-    let memory_region_length = 2*machine.physical_memory_offset + guest_shift - hart_base_pa - MAX_IMAGE_PADDR;
-    let memory_region = MemoryRegion::new(pa2va(MAX_IMAGE_PADDR) + (hart_base_pa - machine.physical_memory_offset), memory_region_length);
+    let memory_region = MemoryRegion::new(pa2va(hart_base_pa + PT_REGION_OFFSET), PT_REGION_SIZE);
     let mut shadow_page_tables = PageTables::new(memory_region, machine.initrd_start, machine.initrd_end);
 
     // Initialize shadow page tables
@@ -302,7 +314,6 @@ pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, Mem
 
         *((va + DIRECT_MAP_PT_INDEX + 0 * 8) as *mut u64) = (0 << 28) | PTE_AD | PTE_RWV;
         *((va + DIRECT_MAP_PT_INDEX + 1 * 8) as *mut u64) = (1 << 28) | PTE_AD | PTE_RWV;
-        *((va + DIRECT_MAP_PT_INDEX + 2 * 8) as *mut u64) = (2 << 28) | PTE_AD | PTE_RWV; // TODO: don't map this page
         *((va + DIRECT_MAP_PT_INDEX + (hart_base_pa >> 30) * 8) as *mut u64) = (hart_base_pa >> 2) | PTE_AD | PTE_RWV;
 
         // Hypervisor code + data
