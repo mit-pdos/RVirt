@@ -159,7 +159,8 @@ impl Fdt {
             }
             FdtVisit::Node { mask } => *mask = match path {
                 ["", "cpus", "cpu"] => (unit_addresses[2] != "" && unit_addresses[2] != "0"),
-                ["", "pci"] => true,
+                ["", "soc", "pci"] => true,
+                ["", "test"] => true,
                 _ => false,
             },
         });
