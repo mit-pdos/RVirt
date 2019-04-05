@@ -263,7 +263,7 @@ pub unsafe fn monitor_init() {
     for i in 0..DIRECT_MAP_PAGES {
         *((boot_page_table_pa() + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
     }
-    crate::print::uart::UART = pa2va(crate::print::uart::UART as u64) as *mut _;
+    crate::print::UART_WRITER.lock().switch_to_virtual_addresses();
 
     *((boot_page_table_pa()) as *mut u64) = 0;
     *((boot_page_table_pa()+16) as *mut u64) = 0;

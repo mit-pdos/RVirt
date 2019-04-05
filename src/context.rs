@@ -98,7 +98,7 @@ impl Uart {
 
     pub fn fill_fifo(&mut self) {
         while self.input_bytes_ready < self.input_fifo.len() {
-            if let Some(ch) = print::uart::getchar() {
+            if let Some(ch) = print::UART_WRITER.lock().getchar() {
                 self.input_fifo[self.input_bytes_ready] = ch;
                 self.input_bytes_ready += 1;
             } else {

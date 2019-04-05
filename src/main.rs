@@ -253,23 +253,32 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     assert!(fdt.magic_valid());
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
     assert!(fdt.total_size() < 64 * 1024);
+    let machine = fdt.parse();
+
+    // Initialize UART
+    if let Some(ty) = machine.uart_type {
+        print::UART_WRITER.lock().init(machine.uart_address, ty);
+    }
+
+    assert!(machine.initrd_end <= machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE);
+    assert!(machine.initrd_end - machine.initrd_start <= pmap::HEAP_SIZE);
+    if machine.initrd_end == 0 {
+        println!("WARN: No guest kernel provided. Make sure to pass one with `-initrd ...`");
+    }
 
     // Initialize memory subsystem.
     pmap::monitor_init();
     let fdt = Fdt::new(pa2va(device_tree_blob));
-    let machine = fdt.parse();
-    assert!(machine.initrd_end <= machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE);
-    assert!(machine.initrd_end - machine.initrd_start <= pmap::HEAP_SIZE);
 
     // Program PLIC
     for i in 1..127 { // priority
-        *(pa2va(0xc000000 + i*4) as *mut u32) = 1;
+        *(pa2va(machine.plic_address + i*4) as *mut u32) = 1;
     }
-    *(pa2va(0xc002180) as *mut u32) = 0xfffffffe; // Hart 1 enabled
-    *(pa2va(0xc002184) as *mut u32) = !0;         //    .
-    *(pa2va(0xc002188) as *mut u32) = !0;         //    .
-    *(pa2va(0xc00218c) as *mut u32) = !0;         //    .
-    *(pa2va(0x0c203000) as *mut u32) = 0;         // Hart 1 S-mode threshold
+    *(pa2va(machine.plic_address + 0x2180) as *mut u32) = 0xfffffffe; // Hart 1 enabled
+    *(pa2va(machine.plic_address + 0x2184) as *mut u32) = !0;         //    .
+    *(pa2va(machine.plic_address + 0x2188) as *mut u32) = !0;         //    .
+    *(pa2va(machine.plic_address + 0x218c) as *mut u32) = !0;         //    .
+    *(pa2va(machine.plic_address + 0x203000) as *mut u32) = 0;        // Hart 1 S-mode threshold
 
     for i in 1..2 {
         let hart_base_pa = machine.physical_memory_offset + i * pmap::HART_SEGMENT_SIZE;
@@ -283,7 +292,7 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
                         (machine.initrd_end - machine.initrd_start) as usize);
 
         // Send IPI
-        *(pa2va(0x2000000 + i*4) as *mut u32) = 1;
+        *(pa2va(machine.clint_address + i*4) as *mut u32) = 1;
     }
     loop {}
 

@@ -6,10 +6,22 @@ const FDT_PROP: u32 = 0x03000000;
 const FDT_NOP: u32 = 0x04000000;
 const FDT_END: u32 = 0x09000000;
 
-#[derive(Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum UartType {
+    Ns16550a,
+    SiFive,
+}
+
+#[derive(Debug, Default)]
 pub struct MachineMeta {
     pub physical_memory_offset: u64,
     pub physical_memory_size: u64,
+
+    pub uart_type: Option<UartType>,
+    pub uart_address: u64,
+
+    pub plic_address: u64,
+    pub clint_address: u64,
 
     pub initrd_start: u64,
     pub initrd_end: u64,
@@ -117,6 +129,9 @@ impl Fdt {
     pub unsafe fn parse(&self) -> MachineMeta {
         let mut initrd_start: Option<u64> = None;
         let mut initrd_end: Option<u64> = None;
+        let mut plic: Option<u64> = None;
+        let mut clint: Option<u64> = None;
+
         let mut meta = MachineMeta::default();
 
         self.walk(|path, unit_addresses, v| {
@@ -130,18 +145,31 @@ impl Fdt {
                         meta.physical_memory_offset = (*region).offset();
                         meta.physical_memory_size = (*region).size();
                     }
+                    (["", "uart"], "reg") |
+                    (["", "soc", "uart"], "reg") => meta.uart_address = prop.read_range().0,
+                    (["", "uart"], "compatible") |
+                    (["", "soc", "uart"], "compatible") => {
+                        match prop.value_str().map(|s| s.trim_end_matches('\0')) {
+                            Some("ns16550a") => meta.uart_type = Some(UartType::Ns16550a),
+                            Some("sifive,uart0") => meta.uart_type = Some(UartType::SiFive),
+                            _ => {},
+                        }
+                    }
+                    (["", "soc", "clint"], "reg") => clint = Some(prop.read_range().0),
+                    (["", "soc", "interrupt-controller"], "reg") => plic = Some(prop.read_range().0),
                     _ => {},
                 }
                 FdtVisit::Node { .. } => {}
             }
         });
 
-        if initrd_start.is_none() || initrd_end.is_none() {
-            println!("No guest kernel provided. Make sure to pass one with `-initrd ...`");
-            loop {}
+        if initrd_start.is_some() && initrd_end.is_some() {
+            meta.initrd_start = initrd_start.unwrap();
+            meta.initrd_end = initrd_end.unwrap();
         }
-        meta.initrd_start = initrd_start.unwrap();
-        meta.initrd_end = initrd_end.unwrap();
+
+        meta.plic_address = plic.unwrap();
+        meta.clint_address = clint.unwrap();
 
         meta
     }
