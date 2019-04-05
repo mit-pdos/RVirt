@@ -5,7 +5,7 @@ use crate::pmap::{PageTables, PageTableRoot};
 use crate::memory_region::MemoryRegion;
 use crate::trap::constants::*;
 use crate::trap::U64Bits;
-use crate::{csr, pmap, print, trap, virtio};
+use crate::{csr, pmap, print, riscv, virtio};
 
 pub static CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
 
@@ -45,6 +45,15 @@ pub struct Uart {
     pub input_bytes_ready: usize,
 }
 
+pub struct HostClint {
+    pub mtime: MemoryRegion,
+    pub mtimecmp: MemoryRegion,
+}
+
+pub struct HostPlic {
+    pub claim_clear: MemoryRegion<u32>,
+}
+
 pub struct Context {
     pub csrs: ControlRegisters,
     pub plic: PlicState,
@@ -63,7 +72,8 @@ pub struct Context {
     // If set, hypervisor exits do not need to check for pending interrupts
     pub no_interrupt: bool,
 
-    pub hartid: u64,
+    pub host_clint: HostClint,
+    pub host_plic: HostPlic,
 }
 
 
@@ -146,7 +156,7 @@ impl Uart {
     const MCR_LOOPBACK_ENABLE: u8 = 0x10;
     const MCR_RESERVED_BITS: u8 = 0xe0;
 
-    pub fn read(&mut self, addr: u64) -> u8 {
+    pub fn read(&mut self, host_clint: &HostClint, addr: u64) -> u8 {
         match (self.dlab, addr) {
             (false, Uart::RECEIVE_BUFFER_REGISTER) => {
                 if self.input_bytes_ready > 0 {
@@ -166,7 +176,7 @@ impl Uart {
             (_, Uart::INTERRUPT_IDENTIFICATION_REGISTER) => {
                 if self.rx_interrupt() {
                     Uart::IIR_FIFOS_ENABLED | Uart::IIR_RX_INTERRUPT
-                } else if self.tx_interrupt(trap::get_mtime()) {
+                } else if self.tx_interrupt(host_clint.get_mtime()) {
                     Uart::IIR_FIFOS_ENABLED | Uart::IIR_TX_INTERRUPT
                 } else {
                     Uart::IIR_FIFOS_ENABLED | Uart::IIR_INTERRUPT_NOT_PENDING
@@ -181,7 +191,7 @@ impl Uart {
                 if self.input_bytes_ready > 0 {
                     lsr |= Uart::LSR_DATA_READY;
                 }
-                if trap::get_mtime() >= self.next_interrupt_time {
+                if host_clint.get_mtime() >= self.next_interrupt_time {
                     lsr |= Uart::LSR_TRANSMITTER_HAS_ROOM | Uart::LSR_TRANSMITTER_EMPTY;
                 }
                 lsr
@@ -193,12 +203,12 @@ impl Uart {
             }
         }
     }
-    pub fn write(&mut self, _plic: &mut PlicState, addr: u64, value: u8) {
+    pub fn write(&mut self, host_clint: &HostClint, addr: u64, value: u8) {
         match (self.dlab, addr, value) {
             (false, Uart::TRANSMIT_HOLDING_REGISTER, _) => {
                 print::guest_putchar(value);
 
-                let current_time = trap::get_mtime();
+                let current_time = host_clint.get_mtime();
                 let transmit_time = self.divisor_latch as u64 * 5;
                 self.next_interrupt_time =
                     self.next_interrupt_time.max(current_time) + transmit_time;
@@ -224,6 +234,24 @@ impl Uart {
     }
 }
 
+impl HostClint {
+    pub fn get_mtime(&self) -> u64 {
+        self.mtime[0]
+    }
+    pub fn set_mtimecmp(&mut self, value: u64) {
+        self.mtimecmp[0] = value;
+    }
+}
+
+impl HostPlic {
+    pub fn claim_and_clear(&mut self) -> u32 {
+        let claim = self.claim_clear[0];
+        riscv::barrier();
+        self.claim_clear[0] = claim;
+        claim
+    }
+}
+
 impl Context {
     pub fn get_csr(&mut self, csr: u32) -> Option<u64> {
         Some(match csr as u64 {
@@ -243,7 +271,7 @@ impl Context {
             csr::sedeleg => 0,
             csr::sideleg => 0,
             csr::scounteren => 0,
-            csr::time if self.smode => trap::get_mtime(),
+            csr::time if self.smode => self.host_clint.get_mtime(),
             csr::time => unimplemented!(),
             c => {
                 println!("Read from unrecognized CSR: {:#x}", c);
@@ -330,7 +358,7 @@ impl Context {
     }
 }
 
-pub unsafe fn initialize(_machine: &MachineMeta, shadow_page_tables: PageTables, guest_memory: MemoryRegion, guest_shift: u64, hartid: u64) {
+pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, guest_memory: MemoryRegion, guest_shift: u64, hartid: u64) {
     *CONTEXT.lock() = Some(Context{
         csrs: ControlRegisters{
             sstatus: 0,
@@ -365,6 +393,15 @@ pub unsafe fn initialize(_machine: &MachineMeta, shadow_page_tables: PageTables,
         guest_shift,
         smode: true,
         no_interrupt: true,
-        hartid,
+        host_clint: HostClint {
+            mtime: MemoryRegion::with_base_address(
+                pmap::pa2va(machine.clint_address + 0xbff8), 0, 8),
+            mtimecmp: MemoryRegion::with_base_address(
+                pmap::pa2va(machine.clint_address + 0x4000 + 8*hartid), 0, 8),
+        },
+        host_plic: HostPlic {
+            claim_clear: MemoryRegion::with_base_address(
+                pmap::pa2va(machine.plic_address + 0x201004 + 0x2000 * hartid), 0, 8),
+        }
     });
 }

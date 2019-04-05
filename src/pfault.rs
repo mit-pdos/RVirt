@@ -97,12 +97,12 @@ unsafe fn handle_uart_access(state: &mut Context, guest_pa: u64, pc: u64) -> boo
     let (_instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
     match decoded {
         Some(Instruction::Lb(i)) => {
-            let value = state.uart.read(guest_pa) as u64;
+            let value = state.uart.read(&state.host_clint, guest_pa) as u64;
             trap::set_register(state, i.rd(), value);
         }
         Some(Instruction::Sb(i)) => {
             let value = (trap::get_register(state, i.rs2()) & 0xff) as u8;
-            state.uart.write(&mut state.plic, guest_pa, value);
+            state.uart.write(&state.host_clint, guest_pa, value);
         }
         Some(instr) => {
             println!("UART: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, pc);

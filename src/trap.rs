@@ -48,10 +48,6 @@ pub mod constants {
 }
 use self::constants::*;
 
-pub const CLINT_ADDRESS: u64 = 0x2000000;
-pub const CLINT_MTIMECMP0_OFFSET: u64 = 0x4000;
-pub const CLINT_MTIME_OFFSET: u64 = 0x0000BFF8;
-
 pub trait U64Bits {
     fn get(&self, mask: Self) -> bool;
     fn set(&mut self, mask: Self, value: bool);
@@ -260,7 +256,7 @@ pub unsafe fn strap() {
             0 => {
                 state.csrs.sip.set(IP_STIP, false);
                 state.csrs.mtimecmp = get_register(state, 10);
-                set_mtimecmp(state.csrs.mtimecmp, state.hartid);
+                state.host_clint.set_mtimecmp(state.csrs.mtimecmp);
             }
             1 => print::guest_putchar(get_register(state, 10) as u8),
             5 => asm!("fence.i" :::: "volatile"),
@@ -311,7 +307,7 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
             csrc!(sip, 1 << interrupt);
             assert_eq!(csrr!(sip) & (1 << interrupt), 0);
 
-            let time = get_mtime();
+            let time = state.host_clint.get_mtime();
             crate::context::Uart::timer(state, time);
             if state.csrs.mtimecmp <= time {
                 state.csrs.sip |= IP_STIP;
@@ -326,14 +322,12 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
                 next = next.min(state.csrs.mtimecmp);
             }
             if next < 0xffffffff {
-                set_mtimecmp(next, state.hartid);
+                state.host_clint.set_mtimecmp(next);
             }
         }
-        0x9 => unsafe {
+        0x9 => {
             // External
-            let claim = *(pmap::pa2va(0x0c201004 + 0x2000 * state.hartid) as *mut u32);
-            asm!("" :::: "volatile");
-            *(pmap::pa2va(0x0c201004 + 0x2000 * state.hartid) as *mut u32) = claim;
+            let claim = state.host_plic.claim_and_clear();
             state.plic.set_pending(claim, true);
 
             // Guest might have masked out this interrupt
@@ -418,13 +412,6 @@ pub fn get_register(state: &mut Context, reg: u32) -> u64 {
         2 => csrr!(sscratch),
         _ => unreachable!(),
     }
-}
-
-pub fn get_mtime() -> u64 {
-    unsafe { *(pmap::pa2va(CLINT_ADDRESS + CLINT_MTIME_OFFSET) as *const u64) }
-}
-pub fn set_mtimecmp(value: u64, hartid: u64) {
-    unsafe { *(pmap::pa2va(CLINT_ADDRESS + CLINT_MTIMECMP0_OFFSET + hartid*8) as *mut u64) = value; }
 }
 
 pub unsafe fn decode_instruction_at_address(_state: &mut Context, guest_va: u64) -> (u32, Option<Instruction>, u64) {
