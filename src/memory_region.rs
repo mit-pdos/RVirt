@@ -1,35 +1,36 @@
+use core::mem;
 use core::ops::{Index, IndexMut};
 use crate::pmap;
 
-pub struct MemoryRegion {
-    ptr: *mut u64,
+pub struct MemoryRegion<T: Copy = u64> {
+    ptr: *mut T,
     base_address: u64,
     length_bytes: u64,
 }
 
-unsafe impl Send for MemoryRegion {}
+unsafe impl<T: Copy + Send> Send for MemoryRegion<T> {}
 
-impl MemoryRegion {
+impl<T: Copy> MemoryRegion<T> {
     pub unsafe fn new(address: u64, length: u64) -> Self {
-        assert_eq!(length % 8, 0);
+        assert_eq!(length % mem::size_of::<T>() as u64, 0);
         Self {
-            ptr: address as *mut u64,
+            ptr: address as *mut T,
             base_address: pmap::va2pa(address),
             length_bytes: length,
         }
     }
 
     pub unsafe fn with_base_address(address: u64, base_address: u64, length: u64) -> Self {
-        assert_eq!(length % 8, 0);
+        assert_eq!(length % mem::size_of::<T>() as u64, 0);
         Self {
-            ptr: address as *mut u64,
+            ptr: address as *mut T,
             base_address,
             length_bytes: length,
         }
     }
 
-    pub fn get(&self, index: u64) -> Option<u64> {
-        if index % 8 != 0 || index < self.base_address {
+    pub fn get(&self, index: u64) -> Option<T> {
+        if index % mem::size_of::<T>() as u64 != 0 || index < self.base_address {
             return None;
         }
 
@@ -38,7 +39,7 @@ impl MemoryRegion {
             return None;
         }
 
-        unsafe { Some(*(self.ptr.add(offset as usize / 8))) }
+        unsafe { Some(*(self.ptr.add(offset as usize / mem::size_of::<T>()))) }
     }
 
     pub fn base(&self) -> u64 {
@@ -54,32 +55,32 @@ impl MemoryRegion {
     }
 }
 
-impl Index<u64> for MemoryRegion {
-    type Output = u64;
+impl<T: Copy> Index<u64> for MemoryRegion<T> {
+    type Output = T;
     /// Return a reference to a u64 index many *bytes* into the memory region. The value of index
-    /// must be divisible by 8.
-    fn index(&self, index: u64) -> &u64 {
-        assert_eq!(index % 8, 0);
+    /// must be divisible by sizeof(T).
+    fn index(&self, index: u64) -> &T {
+        assert_eq!(index % mem::size_of::<T>() as u64, 0);
         assert!(index >= self.base_address);
 
         let offset = index - self.base_address;
         assert!(offset < self.length_bytes);
 
-        unsafe { &*(self.ptr.add(offset as usize / 8)) }
+        unsafe { &*(self.ptr.add(offset as usize / mem::size_of::<T>())) }
     }
 }
 
-impl IndexMut<u64> for MemoryRegion {
+impl<T: Copy> IndexMut<u64> for MemoryRegion<T> {
     /// Return a reference to a u64 index many *bytes* into the memory region. The value of index
-    /// must be divisible by 8.
-    fn index_mut(&mut self, index: u64) -> &mut u64 {
-        assert_eq!(index % 8, 0);
+    /// must be divisible by sizeof(T).
+    fn index_mut(&mut self, index: u64) -> &mut T {
+        assert_eq!(index % mem::size_of::<T>() as u64, 0);
         assert!(index >= self.base_address);
 
         let offset = index - self.base_address;
         assert!(offset < self.length_bytes);
 
-        unsafe { &mut *(self.ptr.add(offset as usize / 8)) }
+        unsafe { &mut *(self.ptr.add(offset as usize / mem::size_of::<T>())) }
     }
 }
 
