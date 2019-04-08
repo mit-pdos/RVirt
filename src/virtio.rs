@@ -90,13 +90,10 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
                     unimplemented!();
                 }
 
-                // Sad, but necessary because we don't know all the pages this page is mapped.
+                // Sad, but necessary because we don't know all the places this page is mapped.
                 pmap::flush_shadow_page_table(&mut state.shadow_page_tables);
 
-                let index = state.virtio.num_queue_guest_pages;
-                assert!(index < state.virtio.queue_guest_pages.len());
-                state.virtio.queue_guest_pages[index] = queue.guest_pa;
-                state.virtio.num_queue_guest_pages += 1;
+                state.virtio.queue_guest_pages.push(queue.guest_pa);
 
                 let va = pmap::pa2va(queue.host_pa);
                 for i in 0..queue.size {
@@ -144,7 +141,7 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
 }
 
 pub fn is_queue_access(state: &mut Context, guest_page: u64) -> bool {
-    for i in 0..state.virtio.num_queue_guest_pages {
+    for i in 0..state.virtio.queue_guest_pages.len() {
         if state.virtio.queue_guest_pages[i] == guest_page {
             return true;
         }

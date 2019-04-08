@@ -1,3 +1,4 @@
+use arrayvec::ArrayVec;
 use spin::Mutex;
 use crate::fdt::MachineMeta;
 use crate::plic::PlicState;
@@ -29,8 +30,7 @@ pub struct ControlRegisters {
 
 pub struct VirtIO {
     pub devices: [virtio::Device; virtio::MAX_DEVICES],
-    pub queue_guest_pages: [u64; virtio::MAX_DEVICES * virtio::MAX_QUEUES],
-    pub num_queue_guest_pages: usize,
+    pub queue_guest_pages: ArrayVec<[u64; virtio::MAX_DEVICES * virtio::MAX_QUEUES]>,
 }
 
 pub struct Uart {
@@ -387,8 +387,7 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
         },
         virtio: VirtIO {
             devices: [virtio::Device::new(); virtio::MAX_DEVICES],
-            queue_guest_pages: [0; virtio::MAX_DEVICES * virtio::MAX_QUEUES],
-            num_queue_guest_pages: 0,
+            queue_guest_pages: ArrayVec::new(),
         },
         guest_shift,
         smode: true,
