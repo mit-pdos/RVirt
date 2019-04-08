@@ -25,6 +25,8 @@ Why not? Rust is a pleasant language to work with and can directly target bare m
 
          $ sudo apt-get install binutils-riscv64-linux-gnu
 
+      You may have to change the makefile to use riscv64-linux-gnu-ld as the linker
+      
    - if not:
 
          $ wget https://ftp.gnu.org/gnu/binutils/binutils-2.32.tar.xz
@@ -72,7 +74,7 @@ You'll need guest binaries to run RVirt: a kernel binary (vmlinux) and a disk im
 
 Now you can run with:
 
-    $ make qemu-release
+    $ make qemu
 
 ## Current Status
 
