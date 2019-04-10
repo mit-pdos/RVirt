@@ -67,10 +67,6 @@ impl U64Bits for u64 {
     }
 }
 
-// 0x340 = mscratch
-// 0x140 = sscratch
-
-
 #[naked]
 #[no_mangle]
 pub unsafe fn strap_entry() -> ! {
@@ -258,7 +254,10 @@ pub unsafe fn strap() {
                 state.csrs.mtimecmp = get_register(state, 10);
                 state.host_clint.set_mtimecmp(state.csrs.mtimecmp);
             }
-            1 => print::guest_putchar(get_register(state, 10) as u8),
+            1 => {
+                let value = get_register(state, 10) as u8;
+                state.uart.output_byte(value)
+            }
             5 => asm!("fence.i" :::: "volatile"),
             6 | 7 => pmap::handle_sfence_vma(&mut state,
                                              Instruction::SfenceVma(riscv_decode::types::RType(0)) /* TODO */),

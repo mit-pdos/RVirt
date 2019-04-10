@@ -45,7 +45,7 @@ pub use pte_flags::*;
 mod page_table_constants {
     pub const DIRECT_MAP_PT_INDEX: u64 = 0xf80;
     pub const DIRECT_MAP_OFFSET: u64 = DIRECT_MAP_PT_INDEX << 27 | ((!0) << 39);
-    pub const DIRECT_MAP_PAGES: u64 = 4; // Uses 1 GB pages
+    pub const DIRECT_MAP_PAGES: u64 = 8; // Uses 1 GB pages
 }
 pub use page_table_constants::*;
 

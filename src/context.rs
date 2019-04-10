@@ -43,6 +43,9 @@ pub struct Uart {
 
     pub input_fifo: [u8; 16],
     pub input_bytes_ready: usize,
+
+    pub line_buffer: ArrayVec<[u8; 128]>,
+    pub hartid: u64,
 }
 
 pub struct HostClint {
@@ -206,7 +209,7 @@ impl Uart {
     pub fn write(&mut self, host_clint: &HostClint, addr: u64, value: u8) {
         match (self.dlab, addr, value) {
             (false, Uart::TRANSMIT_HOLDING_REGISTER, _) => {
-                print::guest_putchar(value);
+                self.output_byte(value as u8);
 
                 let current_time = host_clint.get_mtime();
                 let transmit_time = self.divisor_latch as u64 * 5;
@@ -230,6 +233,19 @@ impl Uart {
                          value, addr, self.dlab);
                 loop {}
             }
+        }
+    }
+
+    pub fn output_byte(&mut self, value: u8) {
+        let len = self.line_buffer.len();
+        if len > 0 && self.line_buffer[len - 1] == '\r' as u8 && value != '\n' as u8 {
+            self.line_buffer.clear();
+        }
+        if value == '\n' as u8 || self.line_buffer.is_full() {
+            print::guest_println(self.hartid, &self.line_buffer);
+            self.line_buffer.clear();
+        } else {
+            self.line_buffer.push(value);
         }
     }
 }
@@ -384,6 +400,8 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
             next_interrupt_time: 0,
             input_fifo: [0; 16],
             input_bytes_ready: 0,
+            line_buffer: ArrayVec::new(),
+            hartid,
         },
         virtio: VirtIO {
             devices: [virtio::Device::new(); virtio::MAX_DEVICES],
@@ -401,6 +419,6 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
         host_plic: HostPlic {
             claim_clear: MemoryRegion::with_base_address(
                 pmap::pa2va(machine.plic_address + 0x201004 + 0x2000 * hartid), 0, 8),
-        }
+        },
     });
 }

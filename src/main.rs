@@ -74,6 +74,10 @@ use pmap::{boot_page_table_pa, pa2va};
  *  0x 80200000 - 0x 80400000  shared data
  *  0x 80400000 - 0x 80600000  hart 0 data segment
  *  0x 80600000 - 0x 80800000  hart 0 S-mode stack
+ *  0x 80800000 - 0x 80801000  hart 0 M-mode stack
+ *  0x 80801000 - 0x 80802000  hart 1 M-mode stack
+ *  0x 80802000 - 0x 80803000  hart 2 M-mode stack
+ *  0x 80803000 - 0x 80804000  hart 3 M-mode stack
  *  0x c0000000 - 0x c0200000  hart 1 stack
  *  0x c0200000 - 0x c0400000  hart 1 data segment
  *  0x c0400000 - 0x c4000000  hart 1 heap
@@ -124,6 +128,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrs!(mstatus, STATUS_MPP_S);
     csrw!(mepc, sstart as u64);
     csrw!(mcounteren, 0xffffffff);
+    csrw!(mscratch, 0x80800000 + 0x1000 * hartid);
 
     asm!("
 .align 4
@@ -135,8 +140,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
           c.nop
 
 mtrap_entry:
-          csrw 0x340, sp // mscratch
-          li sp, 0x80110000
+          csrrw sp, 0x340, sp // mscratch
           sd t0, 0(sp)
           sd t1, 8(sp)
 
@@ -154,8 +158,11 @@ unknown_cause:
           j unknown_cause
 
 msoftware_interrupt:
-          li t0, 0x02000004
-          sw zero, 0,(t0)
+          li t0, 0x02000000
+          csrr t1, 0xf14 // mhartid
+          slli t1, t1, 2
+          add t0, t0, t1
+          sw zero, 0(t0)
 
           csrw 0x341, ra // mepc
 
@@ -188,7 +195,7 @@ mexternal_interrupt:
 return:
           ld t0, 0(sp)
           ld t1, 8(sp)
-          csrr sp, 0x340 // mscratch
+          csrrw sp, 0x340, sp // mscratch
           mret
 continue:" ::: "t0"  : "volatile");
 
@@ -280,7 +287,13 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     *(pa2va(machine.plic_address + 0x218c) as *mut u32) = !0;         //    .
     *(pa2va(machine.plic_address + 0x203000) as *mut u32) = 0;        // Hart 1 S-mode threshold
 
-    for i in 1..2 {
+    *(pa2va(machine.plic_address + 0x2280) as *mut u32) = 0xfffffffe; // Hart 2 enabled
+    *(pa2va(machine.plic_address + 0x2284) as *mut u32) = !0;         //    .
+    *(pa2va(machine.plic_address + 0x2288) as *mut u32) = !0;         //    .
+    *(pa2va(machine.plic_address + 0x228c) as *mut u32) = !0;         //    .
+    *(pa2va(machine.plic_address + 0x205000) as *mut u32) = 0;        // Hart 2 S-mode threshold
+
+    for i in 1..=2 {
         let hart_base_pa = machine.physical_memory_offset + i * pmap::HART_SEGMENT_SIZE;
 
         (*(pa2va(hart_base_pa) as *mut pmap::BootPageTable)).init();
@@ -295,7 +308,6 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
         *(pa2va(machine.clint_address + i*4) as *mut u32) = 1;
     }
     loop {}
-
 }
 
 pub unsafe fn hart_entry(hartid: u64, device_tree_blob: u64) {

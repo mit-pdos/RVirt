@@ -3,7 +3,7 @@ release: src/*.rs Cargo.toml src/linker.ld
 
 qemu: release
 	# note: this maps rng -> virtio2, blk -> virtio1, net -> virtio0. see virtio-order.md for explanation.
-	qemu-system-riscv64 -machine virt -kernel target/riscv64imac-unknown-none-elf/release/rvirt -nographic -initrd fedora-vmlinux -m 2G -smp 2 \
+	qemu-system-riscv64 -machine virt -kernel target/riscv64imac-unknown-none-elf/release/rvirt -nographic -initrd fedora-vmlinux -m 3G -smp 3 \
 	    -object rng-random,filename=/dev/urandom,id=rng0 \
 	    -device virtio-rng-device,rng=rng0,bus=virtio-mmio-bus.0 \
 	    -append "console=ttyS0 ro root=/dev/vda" \
