@@ -177,8 +177,8 @@ mtimer_interrupt:
           slli t0, t0, 3
           li t1, 0x2004000
           add t1, t0, t1
-          li t0, 0xffffffff
-          sd t0, 0(t1)  // mtimecmp[hartid] = -1
+          li t0, 0xffffffffffff
+          sd t0, 0(t1)  // mtimecmp[hartid] = 2^48 - 1
 
           j return
 
