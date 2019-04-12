@@ -134,9 +134,6 @@ macro_rules! println {
 }
 
 pub fn guest_println(hartid: u64, line: &[u8]) {
-    if hartid == 2 {
-        return;
-    }
     use core::fmt::Write;
     use crate::print::UART_WRITER;
     let mut writer = UART_WRITER.lock();

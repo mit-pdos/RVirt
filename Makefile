@@ -10,7 +10,7 @@ qemu: release
 	    -device virtio-blk-device,drive=hd0,bus=virtio-mmio-bus.5 \
 	    -drive file=stage4-disk.img.2,format=raw,id=hd0 \
 	    -device virtio-net-device,netdev=usernet,bus=virtio-mmio-bus.6 \
-	    -netdev user,id=usernet,hostfwd=tcp::10000-:22
+	    -netdev user,id=usernet,hostfwd=tcp::10000-:22 \
 	    -object rng-random,filename=/dev/urandom,id=rng1 \
 	    -device virtio-rng-device,rng=rng1,bus=virtio-mmio-bus.0 \
 	    -device virtio-blk-device,drive=hd1,bus=virtio-mmio-bus.1 \

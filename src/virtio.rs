@@ -42,7 +42,7 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
     let device = ((guest_pa - 0x10001000) / 0x1000) as usize;
     let offset = guest_pa & 0xfff;
     let host_pa = state.virtio.devices[device].host_base_address + offset;
-    println!("VIRTIO: {:x} -> {:x}", guest_pa, host_pa);
+    // println!("VIRTIO: {:x} -> {:x}", guest_pa, host_pa);
 
     let read_u32 = |pa: u64| {
         let mut value = *(crate::pmap::pa2va(pa) as *const u32);
@@ -88,7 +88,7 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
                 assert_eq!(queue.host_pa, 0);
 
                 if value != 0 {
-                    queue.host_pa = (value as u64) << 12;
+                    queue.guest_pa = (value as u64) << 12;
                     value += (state.guest_shift >> 12) as u32;
                     queue.host_pa = (value as u64) << 12;
                 } else {
@@ -98,7 +98,7 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
                 // Sad, but necessary because we don't know all the places this page is mapped.
                 pmap::flush_shadow_page_table(&mut state.shadow_page_tables);
 
-                state.virtio.queue_guest_pages.push(queue.host_pa);
+                state.virtio.queue_guest_pages.push(queue.guest_pa);
 
                 let va = pmap::pa2va(queue.host_pa);
                 for i in 0..queue.size {
@@ -153,7 +153,6 @@ pub unsafe fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u
         match decoded.unwrap() {
             Instruction::Ld(i) => {
                 trap::set_register(state, i.rd(), (*(pmap::pa2va(host_pa) as *const u64)).wrapping_sub(state.guest_shift));
-                // println!("VQUEUE: ld {:#x}, ({:#x})", trap::get_register(state, i.rd()), host_pa);
             }
             Instruction::Sd(i) => {
                 let value = trap::get_register(state, i.rs2());
@@ -162,10 +161,8 @@ pub unsafe fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u
                 } else if state.guest_memory.in_region(value) {
                     *(pmap::pa2va(host_pa) as *mut u64) = value.wrapping_add(state.guest_shift);
                 } else {
-                    println!("VQUEUE: sd {:#x}, ({:#x}) Failed", value, host_pa);
                     loop {}
                 }
-                // println!("VQUEUE: sd {:#x}, ({:#x})", value, host_pa);
             }
             instr => {
                 println!("VQUEUE: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, host_pa, pc);
@@ -173,41 +170,23 @@ pub unsafe fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u
             }
         }
     } else {
-        // let mut wrote = false;
         match decoded.as_ref().unwrap() {
             Instruction::Ld(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const u64)),
             Instruction::Lwu(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const u32) as u64),
-            Instruction::Lhu(i) => {
-                // wrote = true;
-                trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const u16) as u64);
-                // println!("VQUEUE: lhu {:#x}, ({:#x})", trap::get_register(state, i.rd()) as u32, host_pa);
-            }
+            Instruction::Lhu(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const u16) as u64),
             Instruction::Lbu(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const u8) as u64),
             Instruction::Lw(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const i32) as i64 as u64),
             Instruction::Lh(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const i16) as i64 as u64),
             Instruction::Lb(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const i8) as i64 as u64),
             Instruction::Sd(i) => *(pmap::pa2va(host_pa) as *mut u64) = trap::get_register(state, i.rs2()),
-            Instruction::Sw(i) => {
-                // wrote = true;
-                // println!("VQUEUE: sw {:#x}, ({:#x})", trap::get_register(state, i.rs2()) as u32, host_pa);
-                *(pmap::pa2va(host_pa) as *mut u32) = trap::get_register(state, i.rs2()) as u32
-            }
-            Instruction::Sh(i) => {
-                // wrote = true;
-                // println!("VQUEUE: sh {:#x}, ({:#x})", trap::get_register(state, i.rs2()) as u16, host_pa);
-                *(pmap::pa2va(host_pa) as *mut u16) = trap::get_register(state, i.rs2()) as u16
-            }
+            Instruction::Sw(i) => *(pmap::pa2va(host_pa) as *mut u32) = trap::get_register(state, i.rs2()) as u32,
+            Instruction::Sh(i) => *(pmap::pa2va(host_pa) as *mut u16) = trap::get_register(state, i.rs2()) as u16,
             Instruction::Sb(i) => *(pmap::pa2va(host_pa) as *mut u8) = trap::get_register(state, i.rs2()) as u8,
             instr => {
                 println!("VQUEUE: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, host_pa, pc);
                 loop {}
             }
         }
-
-        // if !wrote {
-        //     println!("VQUEUE: Instruction {:?} used to target addr {:#x} from pc {:#x}",
-        //              decoded.as_ref().unwrap(), host_pa, pc);
-        // }
     }
 
     csrw!(sepc, pc + len);

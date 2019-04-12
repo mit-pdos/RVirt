@@ -329,7 +329,6 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
             let host_irq = state.host_plic.claim_and_clear();
             let guest_irq = state.irq_map[host_irq as usize];
             if guest_irq != 0 {
-                println!("host_irq={} maps to guest_irq={}", host_irq, guest_irq);
                 state.plic.set_pending(guest_irq as u32, true);
 
                 // Guest might have masked out this interrupt

@@ -212,7 +212,6 @@ impl Fdt {
 
         for &v in virtio.iter().rev() {
             if let (Some((base_address, size)), Some(irq)) = v {
-                println!("Found virtio device: reg={:x}:{:x} irq={}", base_address, size, irq);
                 meta.virtio.push(Device {
                     base_address,
                     size,

@@ -300,12 +300,10 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
             let index = ((i-1) * 4 + j) as usize;
             if index < machine.virtio.len() {
                 let irq = machine.virtio[index].irq;
-                println!("Enabling IRQ={} for hart {}", irq, i);
                 assert!(irq < 32);
                 irq_mask |= 1u32 << irq;
             }
         }
-        println!("hart {}: PLIC enable={:x}", i, irq_mask);
         *(pa2va(machine.plic_address + 0x2080 + 0x100 * i) as *mut u32) = irq_mask;
 
         (*(pa2va(hart_base_pa) as *mut pmap::BootPageTable)).init();
@@ -353,9 +351,6 @@ pub unsafe fn hart_entry(hartid: u64, device_tree_blob: u64) {
                         fdt.total_size() as usize);
         let guest_fdt = Fdt::new(guest_dtb);
         guest_fdt.mask(guest_memory.len());
-        if hartid == 1 {
-            guest_fdt.print();
-        }
         guest_fdt.parse()
     });
 

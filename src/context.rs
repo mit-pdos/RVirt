@@ -44,7 +44,7 @@ pub struct Uart {
     pub input_fifo: [u8; 16],
     pub input_bytes_ready: usize,
 
-    pub line_buffer: ArrayVec<[u8; 128]>,
+    pub line_buffer: ArrayVec<[u8; 256]>,
     pub hartid: u64,
 }
 
@@ -400,7 +400,6 @@ pub unsafe fn initialize(machine: &MachineMeta,
             }
             assert_eq!(irq_map[host_irq as usize], 0);
             irq_map[host_irq as usize] = guest_irq.unwrap() as u16;
-            println!("For hartid={}: mapping IRQ {} -> {}", hartid, host_irq, irq_map[host_irq as usize]);
         }
     }
 
