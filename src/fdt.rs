@@ -43,6 +43,8 @@ pub struct MachineMeta {
     pub physical_memory_offset: u64,
     pub physical_memory_size: u64,
 
+    pub hartids: ArrayVec<[u64; 16]>,
+
     pub uart_type: Option<UartType>,
     pub uart_address: u64,
 
@@ -196,6 +198,9 @@ impl Fdt {
                         let index = virtio_address_map.index_of(unit_addresses[1]);
                         virtio[index].1 = Some(prop.read_int());
                     }
+                    (["", "cpus", "cpu"], "reg") => {
+                        meta.hartids.push(prop.read_int());
+                    }
                     _ => {},
                 }
                 FdtVisit::Node { .. } => {}
@@ -207,6 +212,7 @@ impl Fdt {
             meta.initrd_end = initrd_end.unwrap();
         }
 
+        meta.hartids.sort_unstable();
         meta.plic_address = plic.unwrap();
         meta.clint_address = clint.unwrap();
 

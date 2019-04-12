@@ -293,7 +293,8 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     // *(pa2va(machine.plic_address + 0x228c) as *mut u32) = !0;         //    .
     *(pa2va(machine.plic_address + 0x205000) as *mut u32) = 0;        // Hart 2 S-mode threshold
 
-    for i in 1..=2 {
+    assert_eq!(machine.hartids[0], 0);
+    for &i in machine.hartids.iter().skip(1) {
         let hart_base_pa = machine.physical_memory_offset + i * pmap::HART_SEGMENT_SIZE;
         let mut irq_mask = 0;
         for j in 0..4 {
