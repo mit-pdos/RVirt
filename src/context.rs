@@ -242,6 +242,7 @@ impl Uart {
     pub fn output_byte(&mut self, value: u8) {
         let len = self.line_buffer.len();
         if len > 0 && self.line_buffer[len - 1] == '\r' as u8 && value != '\n' as u8 {
+            print::guest_println(self.hartid, &self.line_buffer);
             self.line_buffer.clear();
         }
         if value == '\n' as u8 || self.line_buffer.is_full() {
@@ -385,7 +386,6 @@ pub unsafe fn initialize(machine: &MachineMeta,
                          hartid: u64) {
     let mut irq_map = [0; 512];
     let mut virtio_devices = ArrayVec::new();
-    println!("machine.virtio.len = {}", machine.virtio.len());
     for i in 0..4 {
         let index = (hartid as usize - 1) * 4 + i;
         if index < machine.virtio.len() {
