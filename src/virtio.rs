@@ -3,7 +3,7 @@ use crate::context::Context;
 use crate::{trap, pmap};
 
 pub const MAX_QUEUES: usize = 4;
-pub const MAX_DEVICES: usize = 8;
+pub const MAX_DEVICES: usize = 4;
 
 #[derive(Copy, Clone)]
 pub struct Queue {
@@ -20,24 +20,29 @@ pub struct Device {
     /// Virtual Queue Index, offset=0x30
     queue_sel: u32,
     queues: [Queue; MAX_QUEUES],
+    /// Base host physical address of this device
+    host_base_address: u64,
 }
 impl Device {
-    pub const fn new() -> Self {
+    pub fn new(host_base_address: u64) -> Self {
         Self {
             queue_sel: 0,
             queues: [Queue {guest_pa: 0, host_pa: 0, size: 0}; MAX_QUEUES],
+            host_base_address,
         }
     }
 }
 
 #[inline(always)]
-pub fn is_device_access(guest_pa: u64) -> bool {
-    guest_pa >= 0x10001000 && guest_pa < 0x10001000 + 0x1000 * MAX_DEVICES as u64
+pub fn is_device_access(state: &mut Context, guest_pa: u64) -> bool {
+    guest_pa >= 0x10001000 && guest_pa < 0x10001000 + 0x1000 * state.virtio.devices.len() as u64
 }
 
 pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) -> bool {
     let device = ((guest_pa - 0x10001000) / 0x1000) as usize;
     let offset = guest_pa & 0xfff;
+    let host_pa = state.virtio.devices[device].host_base_address + offset;
+    println!("VIRTIO: {:x} -> {:x}", guest_pa, host_pa);
 
     let read_u32 = |pa: u64| {
         let mut value = *(crate::pmap::pa2va(pa) as *const u32);
@@ -52,15 +57,15 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
     let (instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
     match decoded {
         Some(Instruction::Lw(i)) => {
-            let value = read_u32(guest_pa);
-            // println!("VIRTIO: Read value {:#x} at address {:#x}", value, guest_pa);
+            let value = read_u32(host_pa);
+            // println!("VIRTIO: Read value {:#x} at address {:#x}", value, host_pa);
             trap::set_register(state, i.rd(), value as u64)
         }
         Some(Instruction::Lb(i)) => {
             assert!(offset >= 0x100);
-            let value = read_u32(guest_pa & !0x3);
-            let value = (value >> (8*(guest_pa & 0x3))) & 0xff;
-            // println!("VIRTIO: Read byte {:#x} at address {:#x}", value, guest_pa);
+            let value = read_u32(host_pa & !0x3);
+            let value = (value >> (8*(host_pa & 0x3))) & 0xff;
+            // println!("VIRTIO: Read byte {:#x} at address {:#x}", value, host_pa);
             trap::set_register(state, i.rd(), value as u64)
         }
         Some(Instruction::Sw(i)) => {
@@ -74,16 +79,16 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
                 queue.size = value as u64;
 
                 // TODO: support changing queue sizes (is this ever done?)
-                assert_eq!(queue.guest_pa, 0);
+                assert_eq!(queue.host_pa, 0);
             } else if offset == 0x40 { // QueuePFN
                 let queue_sel = state.virtio.devices[device].queue_sel as usize;
                 let queue = &mut state.virtio.devices[device].queues[queue_sel];
 
                 // TODO: support releasing queues and remove this assert.
-                assert_eq!(queue.guest_pa, 0);
+                assert_eq!(queue.host_pa, 0);
 
                 if value != 0 {
-                    queue.guest_pa = (value as u64) << 12;
+                    queue.host_pa = (value as u64) << 12;
                     value += (state.guest_shift >> 12) as u32;
                     queue.host_pa = (value as u64) << 12;
                 } else {
@@ -93,7 +98,7 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
                 // Sad, but necessary because we don't know all the places this page is mapped.
                 pmap::flush_shadow_page_table(&mut state.shadow_page_tables);
 
-                state.virtio.queue_guest_pages.push(queue.guest_pa);
+                state.virtio.queue_guest_pages.push(queue.host_pa);
 
                 let va = pmap::pa2va(queue.host_pa);
                 for i in 0..queue.size {
@@ -102,33 +107,12 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
                     if value != 0 {
                         *ptr = value.wrapping_add(state.guest_shift);
                     }
-                    // println!("VQUEUE(create): [{}] addr={:#x} len={:#x} flags={:#x} next={:#x}",
-                    //          i, *((va + i * 16) as *mut u64),
-                    //          *((va + i * 16 + 8) as *mut u32),
-                    //          *((va + i * 16 + 12) as *mut u16),
-                    //          *((va + i * 16 + 14) as *mut u16),
-                    // );
                 }
-            // } else if offset == 0x50 {
-                // let queue_sel = state.virtio.devices[device].queue_sel as usize;
-                // let queue = &mut state.virtio.devices[device].queues[queue_sel];
-                // let va = pmap::pa2va(queue.host_pa);
-                // println!("VQUEUE: queue={}, host_pa={:#x}, guest_pa={:#x}",
-                //          queue_sel, queue.host_pa, queue.guest_pa);
-                // for i in 0..queue.size {
-                //     println!("VQUEUE(post): [{}] addr={:#x} len={:#x} flags={:#x} next={:#x}",
-                //              i, *((va + i * 16) as *mut u64),
-                //              *((va + i * 16 + 8) as *mut u32),
-                //              *((va + i * 16 + 12) as *mut u16),
-                //              *((va + i * 16 + 14) as *mut u16),
-                //     );
-                // }
             }
-            // println!("VIRTIO: Writing {:#x} to address {:#x}", value, guest_pa);
-            *(crate::pmap::pa2va(guest_pa) as *mut u32) = value;
+            *(crate::pmap::pa2va(host_pa) as *mut u32) = value;
         }
         Some(instr) => {
-            println!("VIRTIO: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, pc);
+            println!("VIRTIO: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, host_pa, pc);
             loop {}
         }
         None => {

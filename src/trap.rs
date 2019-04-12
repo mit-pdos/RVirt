@@ -1,6 +1,6 @@
 use riscv_decode::Instruction;
 use crate::context::{Context, CONTEXT};
-use crate::{pfault, pmap, print, sum};
+use crate::{pfault, pmap, sum};
 
 #[allow(unused)]
 pub mod constants {
@@ -326,16 +326,19 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
         }
         0x9 => {
             // External
-            let claim = state.host_plic.claim_and_clear();
-            state.plic.set_pending(claim, true);
+            let host_irq = state.host_plic.claim_and_clear();
+            let guest_irq = state.irq_map[host_irq as usize];
+            if guest_irq != 0 {
+                println!("host_irq={} maps to guest_irq={}", host_irq, guest_irq);
+                state.plic.set_pending(guest_irq as u32, true);
 
-            // Guest might have masked out this interrupt
-            if state.plic.interrupt_pending() {
-                state.no_interrupt = false;
-                state.csrs.sip |= IP_SEIP;
-            } else {
-                assert_eq!(state.csrs.sip & IP_SEIP, 0);
-                println!("Guest masked external interrupt");
+                // Guest might have masked out this interrupt
+                if state.plic.interrupt_pending() {
+                    state.no_interrupt = false;
+                    state.csrs.sip |= IP_SEIP;
+                } else {
+                    assert_eq!(state.csrs.sip & IP_SEIP, 0);
+                }
             }
 
         }

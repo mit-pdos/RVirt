@@ -134,11 +134,19 @@ macro_rules! println {
 }
 
 pub fn guest_println(hartid: u64, line: &[u8]) {
+    if hartid == 2 {
+        return;
+    }
     use core::fmt::Write;
     use crate::print::UART_WRITER;
     let mut writer = UART_WRITER.lock();
-    writer.write_str("\u{1b}[33m").unwrap();
-    writer.write_fmt(format_args!("{}:", hartid)).unwrap();
+    match hartid {
+        1 => writer.write_str("\u{1b}[32m").unwrap(),
+        2 => writer.write_str("\u{1b}[34m").unwrap(),
+        _ => writer.write_str("\u{1b}[33m").unwrap(),
+    }
+    writer.write_str("\u{1b}[1m").unwrap();
+    writer.write_fmt(format_args!("[{}] ", hartid)).unwrap();
     writer.write_str("\u{1b}[0m").unwrap();
     for &b in line {
         writer.putchar(b);

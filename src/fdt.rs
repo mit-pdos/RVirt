@@ -1,4 +1,4 @@
-use arrayvec::ArrayVec;
+use arrayvec::{ArrayString, ArrayVec};
 
 const FDT_BEGIN_NODE: u32 = 0x01000000;
 const FDT_END_NODE: u32 = 0x02000000;
@@ -6,11 +6,37 @@ const FDT_PROP: u32 = 0x03000000;
 const FDT_NOP: u32 = 0x04000000;
 const FDT_END: u32 = 0x09000000;
 
+#[derive(Default)]
+struct AddressMap(ArrayVec<[ArrayString<[u8; 16]>; Self::MAX_LEN]>);
+impl AddressMap {
+    const MAX_LEN: usize = 16;
+    fn index_of(&mut self, value: &str) -> usize {
+        for i in 0..self.0.len() {
+            if value == &self.0[i] {
+                return i;
+            }
+        }
+
+        let array_string = ArrayString::from(value).unwrap();
+        self.0.push(array_string);
+        self.0.len() - 1
+    }
+}
+
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UartType {
     Ns16550a,
     SiFive,
 }
+
+#[derive(Debug)]
+pub struct Device {
+    pub base_address: u64,
+    pub size: u64,
+    pub irq: u64,
+}
+
 
 #[derive(Debug, Default)]
 pub struct MachineMeta {
@@ -22,6 +48,8 @@ pub struct MachineMeta {
 
     pub plic_address: u64,
     pub clint_address: u64,
+
+    pub virtio: ArrayVec<[Device; 16]>,
 
     pub initrd_start: u64,
     pub initrd_end: u64,
@@ -134,6 +162,9 @@ impl Fdt {
 
         let mut meta = MachineMeta::default();
 
+        let mut virtio_address_map = AddressMap::default();
+        let mut virtio = [(None, None); AddressMap::MAX_LEN];
+
         self.walk(|path, unit_addresses, v| {
             match v {
                 FdtVisit::Property { name, prop } => match (path, name) {
@@ -157,6 +188,14 @@ impl Fdt {
                     }
                     (["", "soc", "clint"], "reg") => clint = Some(prop.read_range().0),
                     (["", "soc", "interrupt-controller"], "reg") => plic = Some(prop.read_range().0),
+                    (["", "virtio_mmio"], "reg") => {
+                        let index = virtio_address_map.index_of(unit_addresses[1]);
+                        virtio[index].0 = Some(prop.read_range());
+                    }
+                    (["", "virtio_mmio"], "interrupts") => {
+                        let index = virtio_address_map.index_of(unit_addresses[1]);
+                        virtio[index].1 = Some(prop.read_int());
+                    }
                     _ => {},
                 }
                 FdtVisit::Node { .. } => {}
@@ -170,6 +209,17 @@ impl Fdt {
 
         meta.plic_address = plic.unwrap();
         meta.clint_address = clint.unwrap();
+
+        for &v in virtio.iter().rev() {
+            if let (Some((base_address, size)), Some(irq)) = v {
+                println!("Found virtio device: reg={:x}:{:x} irq={}", base_address, size, irq);
+                meta.virtio.push(Device {
+                    base_address,
+                    size,
+                    irq
+                })
+            }
+        }
 
         meta
     }
@@ -189,6 +239,10 @@ impl Fdt {
                 ["", "cpus", "cpu"] => (unit_addresses[2] != "" && unit_addresses[2] != "0"),
                 ["", "soc", "pci"] => true,
                 ["", "test"] => true,
+                ["", "virtio_mmio"] if unit_addresses[1] == "10005000" => true,
+                ["", "virtio_mmio"] if unit_addresses[1] == "10006000" => true,
+                ["", "virtio_mmio"] if unit_addresses[1] == "10007000" => true,
+                ["", "virtio_mmio"] if unit_addresses[1] == "10008000" => true,
                 _ => false,
             },
         });

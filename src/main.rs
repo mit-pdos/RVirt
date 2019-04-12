@@ -281,20 +281,32 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     for i in 1..127 { // priority
         *(pa2va(machine.plic_address + i*4) as *mut u32) = 1;
     }
-    *(pa2va(machine.plic_address + 0x2180) as *mut u32) = 0xfffffffe; // Hart 1 enabled
-    *(pa2va(machine.plic_address + 0x2184) as *mut u32) = !0;         //    .
-    *(pa2va(machine.plic_address + 0x2188) as *mut u32) = !0;         //    .
-    *(pa2va(machine.plic_address + 0x218c) as *mut u32) = !0;         //    .
+    // *(pa2va(machine.plic_address + 0x2180) as *mut u32) = 0xfffffffe; // Hart 1 enabled
+    // *(pa2va(machine.plic_address + 0x2184) as *mut u32) = !0;         //    .
+    // *(pa2va(machine.plic_address + 0x2188) as *mut u32) = !0;         //    .
+    // *(pa2va(machine.plic_address + 0x218c) as *mut u32) = !0;         //    .
     *(pa2va(machine.plic_address + 0x203000) as *mut u32) = 0;        // Hart 1 S-mode threshold
 
-    *(pa2va(machine.plic_address + 0x2280) as *mut u32) = 0xfffffffe; // Hart 2 enabled
-    *(pa2va(machine.plic_address + 0x2284) as *mut u32) = !0;         //    .
-    *(pa2va(machine.plic_address + 0x2288) as *mut u32) = !0;         //    .
-    *(pa2va(machine.plic_address + 0x228c) as *mut u32) = !0;         //    .
+    // *(pa2va(machine.plic_address + 0x2280) as *mut u32) = 0xfffffffe; // Hart 2 enabled
+    // *(pa2va(machine.plic_address + 0x2284) as *mut u32) = !0;         //    .
+    // *(pa2va(machine.plic_address + 0x2288) as *mut u32) = !0;         //    .
+    // *(pa2va(machine.plic_address + 0x228c) as *mut u32) = !0;         //    .
     *(pa2va(machine.plic_address + 0x205000) as *mut u32) = 0;        // Hart 2 S-mode threshold
 
     for i in 1..=2 {
         let hart_base_pa = machine.physical_memory_offset + i * pmap::HART_SEGMENT_SIZE;
+        let mut irq_mask = 0;
+        for j in 0..4 {
+            let index = ((i-1) * 4 + j) as usize;
+            if index < machine.virtio.len() {
+                let irq = machine.virtio[index].irq;
+                println!("Enabling IRQ={} for hart {}", irq, i);
+                assert!(irq < 32);
+                irq_mask |= 1u32 << irq;
+            }
+        }
+        println!("hart {}: PLIC enable={:x}", i, irq_mask);
+        *(pa2va(machine.plic_address + 0x2080 + 0x100 * i) as *mut u32) = irq_mask;
 
         (*(pa2va(hart_base_pa) as *mut pmap::BootPageTable)).init();
         core::ptr::copy(pa2va(device_tree_blob) as *const u8,
@@ -335,16 +347,20 @@ pub unsafe fn hart_entry(hartid: u64, device_tree_blob: u64) {
     csrw!(sepc, entry);
 
     // Load guest FDT.
-    sum::access_user_memory(||{
+    let guest_machine = sum::access_user_memory(||{
         core::ptr::copy(pa2va(device_tree_blob) as *const u8,
                         guest_dtb as *mut u8,
                         fdt.total_size() as usize);
         let guest_fdt = Fdt::new(guest_dtb);
         guest_fdt.mask(guest_memory.len());
+        if hartid == 1 {
+            guest_fdt.print();
+        }
+        guest_fdt.parse()
     });
 
     // Initialize context
-    context::initialize(&machine, shadow_page_tables, guest_memory, guest_shift, hartid);
+    context::initialize(&machine, &guest_machine, shadow_page_tables, guest_memory, guest_shift, hartid);
 
     // Jump into the guest kernel.
     asm!("mv a1, $0 // dtb = guest_dtb
