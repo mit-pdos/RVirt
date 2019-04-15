@@ -102,6 +102,16 @@ use pmap::{boot_page_table_pa, pa2va};
  *  0xffffffffc0000000 - 0xffffffffffffffff   0x80000000 - 0xC0000000   RWX    hypervisor memory
  */
 
+    global_asm!("
+.macro   LOAD_ADDRESS rd, symbol
+          lui \\rd, %hi(\\symbol - (2047<<12))
+          srli \\rd, \\rd, 12
+          addi \\rd, \\rd, 2047
+          slli \\rd, \\rd, 12
+          addi \\rd, \\rd, %lo(\\symbol - (2047<<12))
+.endm");
+
+
 #[naked]
 #[no_mangle]
 #[link_section = ".text.init"]
@@ -130,15 +140,10 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mcounteren, 0xffffffff);
     csrw!(mscratch, 0x80800000 + 0x1000 * hartid);
 
-    asm!("
-.align 4
-          auipc t0, 0
-          c.addi t0, 16
+    asm!("LOAD_ADDRESS t0, mtrap_entry
           csrw 0x305, t0 // mtvec
-          c.j continue
-          c.nop
-          c.nop
-
+          j continue
+.align 4
 mtrap_entry:
           csrrw sp, 0x340, sp // mscratch
           sd t0, 0(sp)
