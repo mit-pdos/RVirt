@@ -1,3 +1,83 @@
+
+//! ## Start-up sequence summary:
+//! - QEMU loads hypervisor kernel (this program) and linux kernel (held in initrd) into memory
+//! - QEMU launches hardcoded mrom reset vector, which jumps to 0x80000000
+//!     (where `_start` is located)
+//! - `_start` sets up the stack and calls into mstart
+//! - `mstart` initializes machine-mode control registers as needed by the hypervisor
+//! - `mstart` returns into supervisor-mode in sstart
+//! - `sstart` returns into user-mode at the guest kernel entrypoint
+//!       (running in emulated-supervisor-mode)
+//!
+//! ## Physical memory layout according to machine-mode
+//!   (see also linker.ld, pmap.rs, qemu riscv/virt.c @ 4717595)
+//!   note: although only 36 bits are described here, the address space is wider.
+//! ```text
+//!  START      - END         REGION
+//!  0x        0 - 0x      100  QEMU VIRT_DEBUG
+//!  0x      100 - 0x     1000  unmapped
+//!  0x     1000 - 0x    12000  QEMU MROM (includes hard-coded reset vector; device tree)
+//!  0x    12000 - 0x   100000  unmapped
+//!  0x   100000 - 0x   101000  QEMU VIRT_TEST
+//!  0x   101000 - 0x  2000000  unmapped
+//!  0x  2000000 - 0x  2010000  QEMU VIRT_CLINT
+//!  0x  2010000 - 0x  3000000  unmapped
+//!  0x  3000000 - 0x  3010000  QEMU VIRT_PCIE_PIO
+//!  0x  3010000 - 0x  c000000  unmapped
+//!  0x  c000000 - 0x 10000000  QEMU VIRT_PLIC
+//!  0x 10000000 - 0x 10000100  QEMU VIRT_UART0
+//!  0x 10000100 - 0x 10001000  unmapped
+//!  0x 10001000 - 0x 10002000  QEMU VIRT_VIRTIO
+//!  0x 10002000 - 0x 30000000  unmapped
+//!  0x 30000000 - 0x 40000000  QEMU
+//!  0x 40000000 - 0x 80000000  QEMU VIRT_PCIE_MMIO
+//!  0x 80000000 - 0x 80200000  text segment
+//!  0x 80200000 - 0x 80400000  shared data
+//!  0x 80400000 - 0x 80600000  hart 0 data segment
+//!  0x 80600000 - 0x 80800000  hart 0 S-mode stack
+//!  0x 80800000 - 0x 80801000  hart 0 M-mode stack
+//!  0x 80801000 - 0x 80802000  hart 1 M-mode stack
+//!  0x 80802000 - 0x 80803000  hart 2 M-mode stack
+//!  0x 80803000 - 0x 80804000  hart 3 M-mode stack
+//!  0x c0000000 - 0x c0200000  hart 1 stack
+//!  0x c0200000 - 0x c0400000  hart 1 data segment
+//!  0x c0400000 - 0x c4000000  hart 1 heap
+//!  0x c2000000 - 0x c4000000  hart 1 page tables
+//!  0x c4000000 - 0x100000000  hart 1 guest memory
+//!  0x100000000 - 0x100200000  hart 2 stack
+//!  0x100200000 - 0x100400000  hart 2 data segment
+//!  0x100400000 - 0x104000000  hart 2 heap
+//!  0x102000000 - 0x104000000  hart 2 page tables
+//!  0x104000000 - 0x140000000  hart 2 guest memory
+//!  0x140000000 - 0x140200000  hart 3 stack
+//!  0x140200000 - 0x140400000  hart 3 data segment
+//!  0x140400000 - 0x144000000  hart 3 heap
+//!  0x142000000 - 0x144000000  hart 3 page tables
+//!  0x144000000 - 0x180000000  hart 3 guest memory
+//! ```
+//!
+//! ## Initial supervisor virtual memory layout (boot page table)
+//!    note: the Sv39 addressing mode is in use here
+//! ```text
+//!  VIRTUAL START      - VIRTUAL END          PHYS START   PHYS END     MODE   REGION
+//!  0x00000000         - 0x        80000000   0x00000000 - 0x80000000   RWX    QEMU memory sections
+//!  0xffffffffc0000000 - 0xffffffffffffffff   0x80000000 - 0xC0000000   RWX    hypervisor memory
+//! ```
+//!
+//! ## Linux address space layout (with Sv39 addressing)
+//!
+//! In this addressing mode, Linux does not reserve any address space for a hypervisor. However, the
+//! direct map region is 128GB (one quarter of the addres space) but physical memory takes up at
+//! most a handful of GBs and Linux never accesses any higher addresses. Thus rvirt is able to use
+//! the top 16GB of virtual addresses for its own code and data.
+//!
+//! ```text
+//!  VIRTUAL START      - VIRTUAL END          REGION
+//!  0x0000000000000000 - 0x0000003fffffffff   User memory
+//!  0xffffffbfffffffff - 0xffffffdfffffffff   Kernel memory
+//!  0xffffffdfffffffff - 0xffffffffffffffff   Direct map region
+//! ```
+
 #![no_std]
 #![feature(asm)]
 #![feature(const_str_len)]
@@ -34,75 +114,11 @@ use pmap::{boot_page_table_pa, pa2va};
 
 global_asm!(include_str!("mcode.S"));
 
-/* mandatory rust environment setup */
-
+// mandatory rust environment setup
 #[lang = "eh_personality"] extern fn eh_personality() {}
 #[panic_handler] fn panic(info: &::core::panic::PanicInfo) -> ! { println!("{}", info); loop {}}
 #[start] fn start(_argc: isize, _argv: *const *const u8) -> isize {0}
-#[no_mangle] pub fn abort() -> ! { println!("Abort!"); loop {}}
-
-/* Start-up sequence summary:
- *  - QEMU loads hypervisor kernel (this program), linux kernel, initrd into memory
- *  - QEMU launches hardcoded mrom reset vector, which jumps to _start via elf entrypoint
- *  - _start sets up the stack and calls into mstart
- *  - mstart implements the small portion of machine-mode code needed by the hypervisor
- *  - mstart returns into supervisor-mode in sstart
- *  - sstart returns into user-mode at the guest kernel entrypoint
- *        (which is presumably emulated-supervisor-mode)
- */
-
-/* Physical memory layout according to machine-mode
- *   (see also linker.ld, pmap.rs, qemu riscv/virt.c @ 4717595)
- *   note: although only 36 bits are described here, the address space is wider.
- *  START      - END         REGION
- *  0x        0 - 0x      100  QEMU VIRT_DEBUG
- *  0x      100 - 0x     1000  unmapped
- *  0x     1000 - 0x    12000  QEMU MROM (includes hard-coded reset vector; device tree)
- *  0x    12000 - 0x   100000  unmapped
- *  0x   100000 - 0x   101000  QEMU VIRT_TEST
- *  0x   101000 - 0x  2000000  unmapped
- *  0x  2000000 - 0x  2010000  QEMU VIRT_CLINT
- *  0x  2010000 - 0x  3000000  unmapped
- *  0x  3000000 - 0x  3010000  QEMU VIRT_PCIE_PIO
- *  0x  3010000 - 0x  c000000  unmapped
- *  0x  c000000 - 0x 10000000  QEMU VIRT_PLIC
- *  0x 10000000 - 0x 10000100  QEMU VIRT_UART0
- *  0x 10000100 - 0x 10001000  unmapped
- *  0x 10001000 - 0x 10002000  QEMU VIRT_VIRTIO
- *  0x 10002000 - 0x 30000000  unmapped
- *  0x 30000000 - 0x 40000000  QEMU
- *  0x 40000000 - 0x 80000000  QEMU VIRT_PCIE_MMIO
- *  0x 80000000 - 0x 80200000  text segment
- *  0x 80200000 - 0x 80400000  shared data
- *  0x 80400000 - 0x 80600000  hart 0 data segment
- *  0x 80600000 - 0x 80800000  hart 0 S-mode stack
- *  0x 80800000 - 0x 80801000  hart 0 M-mode stack
- *  0x 80801000 - 0x 80802000  hart 1 M-mode stack
- *  0x 80802000 - 0x 80803000  hart 2 M-mode stack
- *  0x 80803000 - 0x 80804000  hart 3 M-mode stack
- *  0x c0000000 - 0x c0200000  hart 1 stack
- *  0x c0200000 - 0x c0400000  hart 1 data segment
- *  0x c0400000 - 0x c4000000  hart 1 heap
- *  0x c2000000 - 0x c4000000  hart 1 page tables
- *  0x c4000000 - 0x100000000  hart 1 guest memory
- *  0x100000000 - 0x100200000  hart 2 stack
- *  0x100200000 - 0x100400000  hart 2 data segment
- *  0x100400000 - 0x104000000  hart 2 heap
- *  0x102000000 - 0x104000000  hart 2 page tables
- *  0x104000000 - 0x140000000  hart 2 guest memory
- *  0x140000000 - 0x140200000  hart 3 stack
- *  0x140200000 - 0x140400000  hart 3 data segment
- *  0x140400000 - 0x144000000  hart 3 heap
- *  0x142000000 - 0x144000000  hart 3 page tables
- *  0x144000000 - 0x180000000  hart 3 guest memory
- */
-
-/* Initial supervisor virtual memory layout (boot page table)
- *    note: the Sv39 addressing mode is in use here
- *  VIRTUAL START      - VIRTUAL END          PHYS START   PHYS END     MODE   REGION
- *  0x00000000         - 0x        80000000   0x00000000 - 0x80000000   RWX    QEMU memory sections
- *  0xffffffffc0000000 - 0xffffffffffffffff   0x80000000 - 0xC0000000   RWX    hypervisor memory
- */
+#[no_mangle] fn abort() -> ! { println!("Abort!"); loop {}}
 
 #[naked]
 #[no_mangle]
@@ -171,9 +187,14 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     if hartid > 0 {
         let base_address = (1 << 30) * (hartid + 2);
         csrw!(satp, 8 << 60 | (base_address >> 12));
-        asm!("mv ra, $0
-              mv sp, $1
-              mv a1, $2" :: "r"(hart_entry as u64), "r"(base_address + (4<<20) + pmap::DIRECT_MAP_OFFSET), "r"(base_address+4096) :: "volatile");
+        asm!("mv sp, $0
+              mv a1, $1" ::
+             "r"(base_address + (4<<20) + pmap::DIRECT_MAP_OFFSET),
+             "r"(base_address + 4096) ::
+             "volatile");
+        asm!("LOAD_ADDRESS t0, start_hart
+             csrw 0x305, t0 // mtvec"
+             ::: "t0"  : "volatile");
         csrsi!(mstatus, 0x8); //MIE
         loop {}
     } else {
@@ -184,13 +205,10 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
 }
 
 unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
-    assert_eq!(hartid, 0);
-
     asm!("li t0, 0xffffffff40000000
           add sp, sp, t0" ::: "t0" : "volatile");
-    csrw!(stvec, crate::trap::strap_entry as *const () as u64);
-//    csrw!(sie, 0x222);
-    csrs!(sstatus, trap::constants::STATUS_SUM);
+    csrw!(stvec, (||{panic!("Trap on hart 0?!")}) as fn() as *const () as u64);
+    assert_eq!(hartid, 0);
 
     // Read and process host FDT.
     let fdt = Fdt::new(device_tree_blob);
@@ -213,22 +231,12 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     // Initialize memory subsystem.
     pmap::monitor_init();
     let fdt = Fdt::new(pa2va(device_tree_blob));
+    fdt.print();
 
-    // Program PLIC
-    for i in 1..127 { // priority
+    // Program PLIC priorities
+    for i in 1..127 {
         *(pa2va(machine.plic_address + i*4) as *mut u32) = 1;
     }
-    // *(pa2va(machine.plic_address + 0x2180) as *mut u32) = 0xfffffffe; // Hart 1 enabled
-    // *(pa2va(machine.plic_address + 0x2184) as *mut u32) = !0;         //    .
-    // *(pa2va(machine.plic_address + 0x2188) as *mut u32) = !0;         //    .
-    // *(pa2va(machine.plic_address + 0x218c) as *mut u32) = !0;         //    .
-    *(pa2va(machine.plic_address + 0x203000) as *mut u32) = 0;        // Hart 1 S-mode threshold
-
-    // *(pa2va(machine.plic_address + 0x2280) as *mut u32) = 0xfffffffe; // Hart 2 enabled
-    // *(pa2va(machine.plic_address + 0x2284) as *mut u32) = !0;         //    .
-    // *(pa2va(machine.plic_address + 0x2288) as *mut u32) = !0;         //    .
-    // *(pa2va(machine.plic_address + 0x228c) as *mut u32) = !0;         //    .
-    *(pa2va(machine.plic_address + 0x205000) as *mut u32) = 0;        // Hart 2 S-mode threshold
 
     assert_eq!(machine.hartids[0], 0);
     for &i in machine.hartids.iter().skip(1) {
@@ -242,6 +250,7 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
                 irq_mask |= 1u32 << irq;
             }
         }
+        *(pa2va(machine.plic_address + 0x201000 + 0x2000 * i) as *mut u32) = 0;
         *(pa2va(machine.plic_address + 0x2080 + 0x100 * i) as *mut u32) = irq_mask;
 
         (*(pa2va(hart_base_pa) as *mut pmap::BootPageTable)).init();
@@ -258,7 +267,8 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     loop {}
 }
 
-pub unsafe fn hart_entry(hartid: u64, device_tree_blob: u64) {
+#[no_mangle]
+unsafe fn hart_entry(hartid: u64, device_tree_blob: u64) {
     csrw!(stvec, crate::trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
     csrs!(sstatus, trap::constants::STATUS_SUM);
