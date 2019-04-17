@@ -6,6 +6,7 @@ SECTIONS
   . = 0x80000000;
   .text.init :
   {
+    *(.text.entrypoint)
     *(.text.init)
   }
 

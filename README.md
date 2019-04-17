@@ -53,6 +53,17 @@ Why not? Rust is a pleasant language to work with and can directly target bare m
          $ make
          $ sudo make install
 
+ - gdb (optional):
+
+   to download and build:
+
+       $ wget https://ftp.gnu.org/gnu/gdb/gdb-8.2.1.tar.xz
+       $ tar -xf gdb-8.2.1.tar.xz gdb-8.2.1/
+       $ cd gdb-8.2.1
+       $ ./configure --target=riscv64-unknown-elf --disable-nls
+       $ make
+       $ sudo make install
+
 ## Instructions
 
 Download RVirt's source code:
@@ -75,6 +86,11 @@ You'll need guest binaries to run RVirt: a kernel binary (vmlinux) and a disk im
 Now you can run with:
 
     $ make qemu
+
+If you want to debug using gdb, run these commands in the project directory in separate shells:
+
+    $ make qemu-gdb
+    $ riscv64-unknown-elf-gdb
 
 ## Current Status
 
