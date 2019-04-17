@@ -41,7 +41,8 @@ use pmap::{boot_page_table_pa, pa2va};
 
 /* Start-up sequence summary:
  *  - QEMU loads hypervisor kernel (this program), linux kernel, initrd into memory
- *  - QEMU launches hardcoded mrom reset vector, which jumps to _start via elf entrypoint
+ *  - QEMU launches hardcoded mrom reset vector, which jumps to 0x80000000,
+ *  - _start is located at 0x80000000 as the only function in the .init.entrypoint section
  *  - _start sets up the stack and calls into mstart
  *  - mstart implements the small portion of machine-mode code needed by the hypervisor
  *  - mstart returns into supervisor-mode in sstart
@@ -100,7 +101,7 @@ use pmap::{boot_page_table_pa, pa2va};
 
 #[naked]
 #[no_mangle]
-#[link_section = ".text.init"]
+#[link_section = ".text.entrypoint"]
 unsafe fn _start() {
     asm!("li sp, 0x80a00000
           beqz a0, stack_init_done
