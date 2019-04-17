@@ -11,6 +11,7 @@ pub enum UartWriter {
     SiFive { base_address: *mut u32 },
 }
 impl UartWriter {
+    #[inline(always)]
     unsafe fn initialize_ns16550a(base_address: *mut u8) {
         ptr::write_volatile(base_address.offset(1), 0x00);
         ptr::write_volatile(base_address.offset(3), 0x80);
@@ -20,6 +21,7 @@ impl UartWriter {
         ptr::write_volatile(base_address.offset(2), 0xC7);
     }
 
+    #[inline(always)]
     pub fn putchar(&mut self, ch: u8) {
         unsafe {
             match *self {
@@ -149,4 +151,19 @@ pub fn guest_println(hartid: u64, line: &[u8]) {
         writer.putchar(b);
     }
     writer.write_str("\n").unwrap();
+}
+
+/// Print out a single character.
+///
+/// Must be called when running in machine mode. Otherwise is highly unsafe and may clobber random
+/// memory.
+#[link_section = ".text.init"]
+#[inline(never)]
+pub fn mputchar(ch: u8) {
+    unsafe {
+        let writer_ptr = &UART_WRITER as *const _ as u64;
+        let writer_ptr = writer_ptr - 0xffffffff40000000;
+        let mut writer = (*(writer_ptr as *const Mutex<UartWriter>)).lock();
+        writer.putchar(ch);
+    }
 }
