@@ -12,6 +12,7 @@ macro_rules! reg {
     };
 }
 
+/** atomic read from CSR */
 #[macro_export]
 macro_rules! csrr {
     ( $r:ident ) => {
@@ -24,6 +25,7 @@ macro_rules! csrr {
     };
 }
 
+/** atomic write to CSR */
 #[macro_export]
 macro_rules! csrw {
     ( $r:ident, $x:expr ) => {
@@ -35,6 +37,7 @@ macro_rules! csrw {
     };
 }
 
+/** atomic write to CSR from immediate */
 #[macro_export]
 macro_rules! csrwi {
     ( $r:ident, $x:expr ) => {
@@ -51,6 +54,7 @@ macro_rules! csrwi {
     };
 }
 
+/** atomic read and set bits in CSR */
 #[macro_export]
 macro_rules! csrs {
     ( $r:ident, $x:expr ) => {
@@ -62,6 +66,7 @@ macro_rules! csrs {
     };
 }
 
+/** atomic read and set bits in CSR using immediate */
 #[macro_export]
 macro_rules! csrsi {
     ( $r:ident, $x:expr ) => {
@@ -78,6 +83,7 @@ macro_rules! csrsi {
     };
 }
 
+/** atomic read and clear bits in CSR */
 #[macro_export]
 macro_rules! csrc {
     ( $r:ident, $x:expr ) => {
