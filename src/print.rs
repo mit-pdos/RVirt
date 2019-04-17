@@ -133,6 +133,20 @@ macro_rules! println {
     ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
 }
 
-pub fn guest_putchar(c: u8) {
-    UART_WRITER.lock().putchar(c);
+pub fn guest_println(hartid: u64, line: &[u8]) {
+    use core::fmt::Write;
+    use crate::print::UART_WRITER;
+    let mut writer = UART_WRITER.lock();
+    match hartid {
+        1 => writer.write_str("\u{1b}[32m").unwrap(),
+        2 => writer.write_str("\u{1b}[34m").unwrap(),
+        _ => writer.write_str("\u{1b}[33m").unwrap(),
+    }
+    writer.write_str("\u{1b}[1m").unwrap();
+    writer.write_fmt(format_args!("[{}] ", hartid)).unwrap();
+    writer.write_str("\u{1b}[0m").unwrap();
+    for &b in line {
+        writer.putchar(b);
+    }
+    writer.write_str("\n").unwrap();
 }

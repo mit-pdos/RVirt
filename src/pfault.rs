@@ -80,7 +80,7 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
                 return handle_plic_access(state, pa, pc)
             }
 
-            if virtio::is_device_access(pa) {
+            if virtio::is_device_access(state, pa) {
                 return virtio::handle_device_access(state, pa, pc);
             }
         }

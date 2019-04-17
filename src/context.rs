@@ -29,7 +29,7 @@ pub struct ControlRegisters {
 }
 
 pub struct VirtIO {
-    pub devices: [virtio::Device; virtio::MAX_DEVICES],
+    pub devices: ArrayVec<[virtio::Device; virtio::MAX_DEVICES]>,
     pub queue_guest_pages: ArrayVec<[u64; virtio::MAX_DEVICES * virtio::MAX_QUEUES]>,
 }
 
@@ -43,6 +43,9 @@ pub struct Uart {
 
     pub input_fifo: [u8; 16],
     pub input_bytes_ready: usize,
+
+    pub line_buffer: ArrayVec<[u8; 256]>,
+    pub hartid: u64,
 }
 
 pub struct HostClint {
@@ -66,14 +69,17 @@ pub struct Context {
 
     pub guest_shift: u64,
 
-    // Whether the guest is in S-Mode.
+    /// Whether the guest is in S-Mode.
     pub smode: bool,
 
-    // If set, hypervisor exits do not need to check for pending interrupts
+    /// If set, hypervisor exits do not need to check for pending interrupts
     pub no_interrupt: bool,
 
     pub host_clint: HostClint,
     pub host_plic: HostPlic,
+
+    /// Map from host external interrupt number to guest external interrupt nmuber
+    pub irq_map: [u16; 512],
 }
 
 
@@ -206,7 +212,7 @@ impl Uart {
     pub fn write(&mut self, host_clint: &HostClint, addr: u64, value: u8) {
         match (self.dlab, addr, value) {
             (false, Uart::TRANSMIT_HOLDING_REGISTER, _) => {
-                print::guest_putchar(value);
+                self.output_byte(value as u8);
 
                 let current_time = host_clint.get_mtime();
                 let transmit_time = self.divisor_latch as u64 * 5;
@@ -230,6 +236,20 @@ impl Uart {
                          value, addr, self.dlab);
                 loop {}
             }
+        }
+    }
+
+    pub fn output_byte(&mut self, value: u8) {
+        let len = self.line_buffer.len();
+        if len > 0 && self.line_buffer[len - 1] == '\r' as u8 && value != '\n' as u8 {
+            print::guest_println(self.hartid, &self.line_buffer);
+            self.line_buffer.clear();
+        }
+        if value == '\n' as u8 || self.line_buffer.is_full() {
+            print::guest_println(self.hartid, &self.line_buffer);
+            self.line_buffer.clear();
+        } else {
+            self.line_buffer.push(value);
         }
     }
 }
@@ -358,7 +378,31 @@ impl Context {
     }
 }
 
-pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, guest_memory: MemoryRegion, guest_shift: u64, hartid: u64) {
+pub unsafe fn initialize(machine: &MachineMeta,
+                         guest_machine: &MachineMeta,
+                         shadow_page_tables: PageTables,
+                         guest_memory: MemoryRegion,
+                         guest_shift: u64,
+                         hartid: u64) {
+    let mut irq_map = [0; 512];
+    let mut virtio_devices = ArrayVec::new();
+    for i in 0..4 {
+        let index = (hartid as usize - 1) * 4 + i;
+        if index < machine.virtio.len() {
+            virtio_devices.push(virtio::Device::new(machine.virtio[index].base_address));
+            let host_irq = machine.virtio[index].irq;
+            let mut guest_irq = None;
+            for j in 0..4 {
+                if guest_machine.virtio[j].base_address == 0x10001000 + 0x1000 * i as u64 {
+                    guest_irq = Some(guest_machine.virtio[j].irq);
+                    break;
+                }
+            }
+            assert_eq!(irq_map[host_irq as usize], 0);
+            irq_map[host_irq as usize] = guest_irq.unwrap() as u16;
+        }
+    }
+
     *CONTEXT.lock() = Some(Context{
         csrs: ControlRegisters{
             sstatus: 0,
@@ -384,9 +428,11 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
             next_interrupt_time: 0,
             input_fifo: [0; 16],
             input_bytes_ready: 0,
+            line_buffer: ArrayVec::new(),
+            hartid,
         },
         virtio: VirtIO {
-            devices: [virtio::Device::new(); virtio::MAX_DEVICES],
+            devices: virtio_devices,
             queue_guest_pages: ArrayVec::new(),
         },
         guest_shift,
@@ -401,6 +447,7 @@ pub unsafe fn initialize(machine: &MachineMeta, shadow_page_tables: PageTables, 
         host_plic: HostPlic {
             claim_clear: MemoryRegion::with_base_address(
                 pmap::pa2va(machine.plic_address + 0x201004 + 0x2000 * hartid), 0, 8),
-        }
+        },
+        irq_map,
     });
 }

@@ -1,3 +1,6 @@
+echo + set arch riscv\n
+set arch riscv
+
 echo + target remote localhost:26000\n
 target remote localhost:26000
 

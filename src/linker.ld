@@ -8,6 +8,7 @@ SECTIONS
   {
     *(.text.entrypoint)
     *(.text.init)
+	*(.text.mcode)
   }
 
   . = ALIGN(0x1000);
