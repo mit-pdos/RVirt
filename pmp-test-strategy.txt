@@ -1,0 +1,270 @@
+======== REVIEW OF PMP SPECIFICATION ========
+
+Based on v1.10 priv spec
+
+PMP configuration layout on RV64:
+
+     63      56 55      48 47      40 39      32 31      24 23      16 15       8 7        0
+    |  pmp7cfg |  pmp6cfg |  pmp5cfg |  pmp4cfg |  pmp3cfg |  pmp2cfg |  pmp1cfg |  pmp0cfg |   CSR pmpcfg0
+     63      56 55      48 47      40 39      32 31      24 23      16 15       8 7        0
+    | pmp15cfg | pmp14cfg | pmp13cfg | pmp12cfg | pmp11cfg | pmp10cfg |  pmp9cfg |  pmp8cfg |   CSR pmpcfg2
+     63      56 55      48 47      40 39      32 31      24 23      16 15       8 7        0
+
+PMP configuration sublayout:
+
+     7   6        5 4 3 2   1   0
+    | L | reserved | A | X | W | R |   pmp0cfg-pmp15cfg
+      ^              ^   ^   ^   ^
+      |              |   |   |   \----- entry permits read
+      |              |   |   \--------- entry permits write
+      |              |   \------------- entry permits execute
+      |              \----------------- address matching mode of entry
+      \-------------------------------- PMP entry is locked until reset (also covers previous entry in TOR mode)
+                                        (AND means that restrictions apply to M mode as well as other modes)
+
+PMP address matching modes:
+
+    A = 0:  (OFF) null region (disabled)
+
+        No addresses are matched by this region.
+
+    A = 1:  (TOR) top-of-range region
+
+        Address range is formed from the previous entry's address (pppp...pppp) and this entry's address (aaaa...aaaa).
+
+        The range matched is pppp...pppp00 (inclusive) through aaaa...aaaa00 (exclusive).
+
+        If the first PMP region is set to TOR mode, the previous address is 0000...0000.
+
+    A = 2:  (NA4) naturally-aligned four-byte region
+    A = 3:  (NAPOT) naturally-aligned power-of-two region, >= 8 bytes
+
+        These two modes encode regions of size 2^N for 2 <= N <= 56
+
+        Encodings:
+
+           address[55:2]   mode    length                  matching range
+            aaaa...aaaa   NA4     4 bytes      aaaa...aaaa00 through aaaa...aaaa11
+            aaaa...aaa0   NAPOT   8 bytes      aaaa...aaa000 through aaaa...aaa111
+            aaaa...aa01   NAPOT   16 bytes     aaaa...aa0000 through aaaa...aa1111
+            aaaa...a011   NAPOT   32 bytes     aaaa...a00000 through aaaa...a11111
+            aaaa...0111   NAPOT   64 bytes     aaaa...000000 through aaaa...111111
+              . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+            aa01...1111   NAPOT   2^54 bytes   aa00...000000 through aa11...111111
+            a011...1111   NAPOT   2^55 bytes   a000...000000 through a111...111111
+            0111...1111   NAPOT   2^56 bytes   0000...000000 through 1111...111111
+
+PMP address register format on RV64:
+
+     63      54 53            0
+    | reserved | address[55:2] |   pmpaddr0-pmpaddr15
+
+PMP prioritization:
+
+    The earliest PMP entry that matches any byte of an access determines whether that access succeeds or fails.
+
+    If no PMP entry matches, and the privilege mode is M, the access succeeds.
+    If no PMP entry matches, and the privilege mode is S or U, the access fails.
+
+    Multi-byte accesses that straddle a border between PMP regions fail, even if there is no conflict between the
+    permissions of the two regions.
+
+    If the L bit is clear, and the privilege mode is M, the access succeeds.
+    Otherwise, the access only succeeds if the access's RWX type has its corresponding bit set.
+
+======== TESTING STRATEGY FOR PMP ========
+
+NOTE: many of these tests will be unnecessary to actually implement, because we don't care about verifying functionality
+to the extent that I was thinking when I originally wrote this. So please don't take this as a plan for the actual full
+scope of what I'm going to do.
+
+    Elements to verify:
+        - OFF regions do not restrict access for M
+        - OFF regions do not unrestrict access for S/U
+        - OFF regions have no collateral effects
+        - The same permissions should be present for both S and U.
+        - TOR byte boundaries should be correct (inclusive, exclusive)
+        - Byte accesses and aligned word accesses should fail on any edge dereference
+        - NAPOT regions should handle low and high bits correctly
+        - NAPOT regions should be the right size
+        - Region priority-order should be respected.
+        - NAPOT should function for every power of two from 2^2 to 2^56
+        - M should not be restricted unless L is on
+        - L should prevent rewriting of any config or address bits
+        - L should prevent rewriting of the previous entry IFF in TOR mode
+        - Restricts should function the same regardless of the entry number used
+        - R, W, and X should be respected correctly in S/U mode
+        - R, W, and X should be respected correctly in M mode
+        - PMP violations are trapped in S/U mode
+        - PMP violations are trapped in M mode
+        - PMP violations are trapped precisely
+        - Address ranges for a first-entry TOR are correct
+
+    As a note, the following tests should verify, for a denial, that the correct KIND of exception was generated, and
+    that the exception was generated from the correct ADDRESS, not just that SOME exception was generated.
+
+    For the sake of not testing too exhaustively, only a subset of these tests will actually be implemented. The tests
+    planned to be implemented have a # symbol at the left.
+
+    Tests:
+      # 1.  Simple functionality check: enable a set of regions with R or W or X and confirm that U/S can R/W/X them.
+                VARIATIONS: U/S, verify each of R/W/X
+                    1.1 -> R: S,U
+                    1.2 -> W: S,U
+                    1.3 -> X: S,U
+      # 2.  Simple rejection check: enable a set of regions without R or W or X and confirm that U/S cannot R/W/X them.
+                VARIATIONS: U/S, verify each of R/W/X
+                    2.1 -> R: S,U
+                    2.2 -> W: S,U
+                    2.3 -> X: S,U
+      # 3.  Machine functionality check: enable a set of locked regions with R or W or X, and confirm that M can R/W/X
+            them.
+                VARIATIONS: verify each of R/W/X
+                    3.1 -> R
+                    3.2 -> W
+                    3.3 -> X
+      # 4.  Machine rejection check: enable a set of locked regions without R or W or X, and confirm that M cannot R/W/X
+            them.
+                VARIATIONS: verify each of R/W/X
+                    4.1 -> R
+                    4.2 -> W
+                    4.3 -> X
+      # 5.  Machine irreverence check: enable a set of regions without R or W or X and confirm that M can still R/W/X
+            them.
+                VARIATIONS: verify each of R/W/X
+                    5.1 -> R
+                    5.2 -> W
+                    5.3 -> X
+        6.  Configure a bunch of locked OFF regions with no RWX; verify that these don't prevent M mode from
+            reading/writing/executing anything.
+                VARIATIONS: verify each of R/W/X
+                    6.1 -> R
+                    6.2 -> W
+                    6.3 -> X
+        7.  Configure a bunch of OFF regions (and only a single X region) with all RWX enabled; verify that U/S code
+            running in the X region cannot read or write anything, or execute anything else outside of the region.
+                VARIATIONS: U/S, verify each of R/W/X
+                    7.1 -> R: S,U
+                    7.2 -> W: S,U
+                    7.3 -> X: S,U
+        8.  Configure all of the high-priority OFF regions to include key addresses; confirm that these don't mess with
+            resolution for a lowest-priority region
+                VARIATIONS: M/S/U, L/!L
+                    8.1 -> L: M,S,U
+                    8.2 -> !L: M,S,U
+        9.  Configure consecutive TOR regions over an entire array, either L or !L, and confirm that M/S/U can perform
+            or not perform by byte/halfword/word/doubleword accesses on the entire range.
+                VARIATIONS: M/S/U, L/!L, R/W/X, permit/deny
+                    9.1 -> LR-permit: M,S,U
+                    9.2 -> LR-deny: M,S,U
+                    9.3 -> LW-permit: M,S,U
+                    9.4 -> LW-deny: M,S,U
+                    9.5 -> LX-permit: M,S,U
+                    9.6 -> LX-deny: M,S,U
+                    9.7 -> !LR-permit: M,S,U
+                    9.8 -> !LR-deny: M,S,U
+                    9.9 -> !LW-permit: M,S,U
+                    9.10 -> !LW-deny: M,S,U
+                    9.11 -> !LX-permit: M,S,U
+                    9.12 -> !LX-deny: M,S,U
+        10. Configure consecutive TOR regions over an entire array, either L or !L, and confirm that accesses to region
+            edges are rejected, despite matching permissions.
+                VARIATIONS: M/S/U, L/!L
+                    10.1 -> L: M,S,U
+                    10.2 -> !L: M,S,U
+        11. Confirm that M mode can perform edge accesses on !L regions
+                VARIATIONS: R/W/X, permit/deny
+                    11.1 -> R-permit
+                    11.2 -> R-deny
+                    11.3 -> W-permit
+                    11.4 -> W-deny
+                    11.5 -> X-permit
+                    11.6 -> X-deny
+      # 12. Check smallest (4, 8), medium (2^32), and largest (2^56) NAPOT regions for correct range handling.
+                VARIATIONS: M/S/U, L/!L, R/W/X, permit/deny, 4/8/2^32/2^56
+                    12.1 -> LR-permit-4: M,S,U
+                    12.2 -> LR-permit-8: M,S,U
+                    12.3 -> LR-permit-2^32: M,S,U
+                    12.4 -> LR-permit-2^56: M,S,U
+                    12.5 -> LR-deny-4: M,S,U
+                    12.6 -> LR-deny-8: M,S,U
+                    12.7 -> LR-deny-2^32: M,S,U
+                    12.8 -> LR-deny-2^56: M,S,U
+                    12.9 -> LW-permit-4: M,S,U
+                        [...]
+                    12.16 -> LW-deny-2^56: M,S,U
+                    12.17 -> LX-permit-4: M,S,U
+                        [...]
+                    12.24 -> LX-deny-2^56: M,S,U
+                    12.25 -> !LR-permit-4: M,S,U
+                        [...]
+                    12.48 -> !LX-deny-2^56: M,S,U
+      # 13. Check contiguous (buddy-block-style) NAPOT ranges for permitted accesses over the entire array, both with
+            byte and word accesses.
+                VARIATIONS: M/S/U, L/!L, R/W/X, permit/deny, byte/word
+                    13.1 -> LR-permit-byte: M,S,U
+                    13.2 -> LR-permit-word: M,S,U
+                    13.3 -> LR-deny-byte: M,S,U
+                    13.4 -> LR-deny-word: M,S,U
+                    13.5 -> LW-permit-byte: M,S,U
+                        [...]
+                    13.8 -> LW-deny-word: M,S,U
+                    13.9 -> LX-permit-byte: M,S,U
+                        [...]
+                    13.12 -> LX-deny-word: M,S,U
+                    13.13 -> !LR-permit-byte: M,S,U
+                        [...]
+                    13.24 -> !LX-deny-word: M,S,U
+        14. Confirm that contiguous NAPOT ranges will cause exceptions on edge accesses, regardless of permissions
+                VARIATIONS: M/S/U, L/!L, R/W/X, 4/8/2^32/2^56
+                    [...]
+      # 15. Build forward-pyramid and reverse-pyramid configurations from NAPOT; sample different points on the pyramid
+            to confirm that priority order is respected.
+                VARIATIONS: M/S/U, L/!L, R/W/X, left-edge/middle/right-edge pyramid
+                    15.1 -> LR-left: M,S,U
+                    15.2 -> LR-middle: M,S,U
+                    15.3 -> LR-right: M,S,U
+                    15.4 -> LW-left: M,S,U
+                    15.5 -> LW-middle: M,S,U
+                    15.6 -> LW-right: M,S,U
+                    15.7 -> LX-left: M,S,U
+                    15.8 -> LX-middle: M,S,U
+                    15.9 -> LX-right: M,S,U
+                    15.10 -> !LR-left: M,S,U
+                    15.11 -> !LR-middle: M,S,U
+                    15.12 -> !LR-right: M,S,U
+                    15.13 -> !LW-left: M,S,U
+                    15.14 -> !LW-middle: M,S,U
+                    15.15 -> !LW-right: M,S,U
+                    15.16 -> !LX-left: M,S,U
+                    15.17 -> !LX-middle: M,S,U
+                    15.18 -> !LX-right: M,S,U
+        16. Stick TOR ranges on top of NAPOT ranges; confirm that TOR permissions override NAPOT permissions.
+                VARIATIONS: M/S/U, L/!L, R/W/X, override-add/override-subtract
+                    [...]
+        17. Stick NAPOT ranges on top of TOR ranges; confirm that NAPOT permissions override TOR permissions.
+                VARIATIONS: M/S/U, L/!L, R/W/X, override-add/override-subtract
+                    [...]
+        18. Confirm that U-mode and S-mode cannot modify the CSRs
+                VARIATIONS: U/S, L/!L, R/W/X, A=[0-3]
+                    [...]
+        19. Confirm that M-mode can always modify CSRs, when L is unset.
+                VARIATIONS: R/W/X, A=[0-3], entry=[0-15]
+                    [...]
+      # 20. Confirm that M-mode cannot ever modify CSRs, when L is set.
+                VARIATIONS: R/W/X, A=[0-3], entry=[0-15]
+                    20.1 -> R-A0-E0
+                        [...]
+                    20.16 -> R-A0-E15
+                    20.17 -> R-A3-E0
+                        [...]
+                    20.64 -> R-A3-E15
+                    20.65 -> W-A0-E0
+                    20.128 -> W-A3-E15
+                    20.129 -> X-A0-E0
+                    20.192 -> X-A3-E15
+        21. Recap simple/machine functionality/rejection/irreverence checks from tests 1-5; confirm that these are the
+            same regardless of which entry is used.
+                VARIATIONS: M/S/U, R/W/X, entry=[0-15]
+        22. Configure TOR in first entry, confirm that it starts at the correct position
+                VARIATIONS: M/S/U, R/W/X
