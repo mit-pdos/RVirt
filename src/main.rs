@@ -20,6 +20,7 @@ mod context;
 mod csr;
 mod elf;
 mod fdt;
+mod machdebug;
 mod memory_region;
 mod pfault;
 mod plic;
