@@ -106,6 +106,7 @@ mod pfault;
 mod plic;
 mod pmap;
 mod pmp;
+mod pmptest;
 mod sum;
 mod trap;
 mod virtio;
@@ -113,6 +114,7 @@ mod virtio;
 use fdt::*;
 use trap::constants::*;
 use pmap::{boot_page_table_pa, pa2va};
+use pmptest::pmptest_mstart;
 
 global_asm!(include_str!("mcode.S"));
 
@@ -121,6 +123,8 @@ global_asm!(include_str!("mcode.S"));
 #[panic_handler] fn panic(info: &::core::panic::PanicInfo) -> ! { println!("{}", info); loop {}}
 #[start] fn start(_argc: isize, _argv: *const *const u8) -> isize {0}
 #[no_mangle] fn abort() -> ! { println!("Abort!"); loop {}}
+
+const TEST_PMP: bool = false;
 
 #[naked]
 #[no_mangle]
@@ -135,7 +139,11 @@ unsafe fn _start() {
 
     let hartid = reg!(a0);
     let device_tree_blob = reg!(a1);
-    mstart(hartid, device_tree_blob);
+    if TEST_PMP {
+        pmptest_mstart(hartid, device_tree_blob);
+    } else {
+        mstart(hartid, device_tree_blob);
+    }
 }
 
 #[link_section = ".text.init"]
