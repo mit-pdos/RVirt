@@ -174,6 +174,14 @@ pub unsafe fn strap() {
         println!("sepc = {:#x}", csrr!(sepc));
         println!("stval = {:#x}", csrr!(stval));
         println!("cause = {}", cause);
+
+        let region: crate::memory_region::MemoryRegion = crate::memory_region::MemoryRegion::with_base_address(SSTACK_BASE, 0, 32 * 8);
+        println!("reg ra = {:#x}", region[1 * 8]);
+        println!("reg sp = {:#x}", csrr!(sscratch));
+        for i in 3..32 {
+            println!("reg x{} = {:#x}", i, region[i * 8]);
+        }
+
         loop {}
     }
 
