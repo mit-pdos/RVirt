@@ -25,6 +25,7 @@ mod memory_region;
 mod pfault;
 mod plic;
 mod pmap;
+mod pmp;
 mod sum;
 mod trap;
 mod virtio;
