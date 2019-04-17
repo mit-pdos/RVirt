@@ -45,6 +45,18 @@ pub mod constants {
     pub const SATP_PPN: u64 = 0xfff_ffffffff;
 
     pub const SSTACK_BASE: u64 = 0xffffffffc0a00000 - 32*8;
+
+    pub const SCAUSE_INSN_MISALIGNED: u64 = 0;
+    pub const SCAUSE_INSN_ACCESS_FAULT: u64 = 1;
+    pub const SCAUSE_ILLEGAL_INSN: u64 = 2;
+    pub const SCAUSE_BREAKPOINT: u64 = 3;
+    pub const SCAUSE_LOAD_ACCESS_FAULT: u64 = 5;
+    pub const SCAUSE_ATOMIC_MISALIGNED: u64 = 6;
+    pub const SCAUSE_STORE_ACCESS_FAULT: u64 = 7;
+    pub const SCAUSE_ENV_CALL: u64 = 8;
+    pub const SCAUSE_INSN_PAGE_FAULT: u64 = 12;
+    pub const SCAUSE_LOAD_PAGE_FAULT: u64 = 13;
+    pub const SCAUSE_STORE_PAGE_FAULT: u64 = 15;
 }
 use self::constants::*;
 
@@ -158,6 +170,14 @@ pub unsafe fn strap() {
         println!("sepc = {:#x}", csrr!(sepc));
         println!("stval = {:#x}", csrr!(stval));
         println!("cause = {}", cause);
+
+        let region: crate::memory_region::MemoryRegion = crate::memory_region::MemoryRegion::with_base_address(SSTACK_BASE, 0, 32 * 8);
+        println!("reg ra = {:#x}", region[1 * 8]);
+        println!("reg sp = {:#x}", csrr!(sscratch));
+        for i in 3..32 {
+            println!("reg x{} = {:#x}", i, region[i * 8]);
+        }
+
         loop {}
     }
 
@@ -167,14 +187,14 @@ pub unsafe fn strap() {
     if (cause as isize) < 0 {
         handle_interrupt(&mut state, cause);
         maybe_forward_interrupt(&mut state, csrr!(sepc));
-    } else if cause == 12 || cause == 13 || cause == 15 {
+    } else if cause == SCAUSE_INSN_PAGE_FAULT || cause == SCAUSE_LOAD_PAGE_FAULT || cause == SCAUSE_STORE_PAGE_FAULT {
         let pc = csrr!(sepc);
         if pfault::handle_page_fault(&mut state, cause, pc) {
             maybe_forward_interrupt(&mut state, pc);
         } else {
             forward_exception(&mut state, cause, pc);
         }
-    } else if cause == 2 && state.smode {
+    } else if cause == SCAUSE_ILLEGAL_INSN && state.smode {
         let pc = csrr!(sepc);
         let (instruction, decoded, len) = decode_instruction_at_address(&mut state, pc);
         let mut advance_pc = true;
@@ -247,7 +267,7 @@ pub unsafe fn strap() {
             csrw!(sepc, pc + len);
         }
         maybe_forward_interrupt(&mut state, csrr!(sepc));
-    } else if cause == 8 && state.smode {
+    } else if cause == SCAUSE_ENV_CALL && state.smode {
         match get_register(state, 17) {
             0 => {
                 state.csrs.sip.set(IP_STIP, false);
@@ -268,7 +288,7 @@ pub unsafe fn strap() {
         }
         csrw!(sepc, csrr!(sepc) + 4);
     } else {
-        if cause != 8 { // no need to print anything for guest syscalls...
+        if cause != SCAUSE_ENV_CALL { // no need to print anything for guest syscalls...
             println!("Forward exception (cause = {}, smode={})!", cause, state.smode);
         } else {
             // println!("system call: {}({:#x}, {:#x}, {:#x}, {:#x})",

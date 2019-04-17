@@ -2,7 +2,7 @@
 //! ## Start-up sequence summary:
 //! - QEMU loads hypervisor kernel (this program) and linux kernel (held in initrd) into memory
 //! - QEMU launches hardcoded mrom reset vector, which jumps to 0x80000000
-//!     (where `_start` is located)
+//! - _start is located at 0x80000000 as the only function in the .init.entrypoint section
 //! - `_start` sets up the stack and calls into mstart
 //! - `mstart` initializes machine-mode control registers as needed by the hypervisor
 //! - `mstart` returns into supervisor-mode in sstart
@@ -122,7 +122,7 @@ global_asm!(include_str!("mcode.S"));
 
 #[naked]
 #[no_mangle]
-#[link_section = ".text.init"]
+#[link_section = ".text.entrypoint"]
 unsafe fn _start() {
     asm!("li sp, 0x80a00000
           beqz a0, stack_init_done
