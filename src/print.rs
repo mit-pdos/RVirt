@@ -1,16 +1,23 @@
 use core::{fmt, ptr};
-use spin::Mutex;
+use spin::{Mutex, MutexGuard};
 use crate::fdt::UartType;
 use crate::pmap;
 
 // see https://github.com/riscv/riscv-pk/blob/master/machine/uart16550.c
 // see: https://os.phil-opp.com/printing-to-screen
 
-pub enum UartWriter {
-    Ns16550a { initialized: bool, base_address: *mut u8 },
-    SiFive { base_address: *mut u32 },
+enum UartWriterInner {
+    Ns16550a { initialized: bool },
+    SiFive,
 }
-impl UartWriter {
+
+pub struct UartWriter {
+    pa: u64,
+    va: Option<u64>,
+    inner: UartWriterInner,
+}
+
+impl UartWriterInner {
     #[inline(always)]
     unsafe fn initialize_ns16550a(base_address: *mut u8) {
         ptr::write_volatile(base_address.offset(1), 0x00);
@@ -22,10 +29,11 @@ impl UartWriter {
     }
 
     #[inline(always)]
-    pub fn putchar(&mut self, ch: u8) {
+    fn putchar(&mut self, base_address: u64, ch: u8) {
         unsafe {
             match *self {
-                UartWriter::Ns16550a { ref mut initialized, base_address) => {
+                UartWriterInner::Ns16550a { ref mut initialized) => {
+                    let base_address = base_address as *mut u8;
                     if !*initialized {
                         Self::initialize_ns16550a(base_address);
                         *initialized = true;
@@ -36,7 +44,8 @@ impl UartWriter {
                     }
                     ptr::write_volatile(base_address, ch)
                 }
-                UartWriter::SiFive { base_address } => {
+                UartWriterInner::SiFive => {
+                    let base_address = base_address as *mut u32;
                     while ptr::read_volatile(base_address) & 0x80000000 != 0 {
                         // do nothing
                     }
@@ -46,10 +55,12 @@ impl UartWriter {
         }
     }
 
-    pub fn getchar(&mut self) -> Option<u8> {
+    #[inline(always)]
+    fn getchar(&mut self, base_address: u64) -> Option<u8> {
         unsafe {
             match *self {
-                UartWriter::Ns16550a { ref mut initialized, base_address } => {
+                UartWriterInner::Ns16550a { ref mut initialized } => {
+                    let base_address = base_address as *mut u8;
                     if !*initialized {
                         Self::initialize_ns16550a(base_address);
                         *initialized = true;
@@ -61,7 +72,8 @@ impl UartWriter {
                         None
                     }
                 }
-                UartWriter::SiFive { base_address } => {
+                UartWriterInner::SiFive => {
+                    let base_address = base_address as *mut u32;
                     let rxdata = ptr::read_volatile(base_address);
                     if rxdata & 0x80000000 != 0 {
                         Some(rxdata as u8)
@@ -72,33 +84,39 @@ impl UartWriter {
             }
         }
     }
+}
+impl UartWriter {
+    pub fn putchar(&mut self, ch: u8) {
+        self.inner.putchar(self.va.unwrap_or(self.pa), ch);
+    }
+
+    #[link_section = ".text.init"]
+    pub fn mputchar(&mut self, ch: u8) {
+        self.inner.putchar(self.pa, ch);
+    }
+
+    pub fn getchar(&mut self) -> Option<u8> {
+        self.inner.getchar(self.va.unwrap_or(self.pa))
+    }
 
     pub unsafe fn init(&mut self, address: u64, ty: UartType) {
-        if let UartWriter::Ns16550a { initialized: true, base_address } = *self {
-            assert_eq!(address, base_address as u64);
+        if let UartWriterInner::Ns16550a { initialized: true } = self.inner {
+            assert_eq!(self.pa, address);
             assert_eq!(ty, UartType::Ns16550a);
         } else {
-            *self = match ty {
-                UartType::Ns16550a => UartWriter::Ns16550a {
+            self.inner = match ty {
+                UartType::Ns16550a => UartWriterInner::Ns16550a {
                     initialized: false,
-                    base_address: address as *mut u8
                 },
-                UartType::SiFive => UartWriter::SiFive {
-                    base_address: address as *mut u32
-                },
+                UartType::SiFive => UartWriterInner::SiFive,
             };
+            self.pa = address;
+            assert_eq!(self.va, None);
         }
     }
 
     pub unsafe fn switch_to_virtual_addresses(&mut self) {
-        match *self {
-            UartWriter::Ns16550a { ref mut base_address, .. } => {
-                *base_address = pmap::pa2va(*base_address as u64) as *mut u8
-            }
-            UartWriter::SiFive { ref mut base_address, .. } => {
-                *base_address = pmap::pa2va(*base_address as u64) as *mut u32
-            }
-        }
+        self.va = Some(pmap::pa2va(self.pa));
     }
 }
 impl fmt::Write for UartWriter {
@@ -115,9 +133,10 @@ unsafe impl Send for UartWriter {}
 /// parsed, but until then this provides a way to debug early boot issues. Once the memory subsystem
 /// is initialized, this will again be updated to use virtual addresses instead of physical addresses.
 #[link_section = ".shared.data"]
-pub static UART_WRITER: Mutex<UartWriter> = Mutex::new(UartWriter::Ns16550a {
-    initialized: false,
-    base_address: 0x10000000 as *mut u8,
+pub static UART_WRITER: Mutex<UartWriter> = Mutex::new(UartWriter {
+    pa: 0x10000000,
+    va: None,
+    inner: UartWriterInner::Ns16550a { initialized: false },
 });
 
 macro_rules! print {
@@ -153,17 +172,9 @@ pub fn guest_println(hartid: u64, line: &[u8]) {
     writer.write_str("\n").unwrap();
 }
 
-/// Print out a single character.
-///
-/// Must be called when running in machine mode. Otherwise is highly unsafe and may clobber random
-/// memory.
 #[link_section = ".text.init"]
-#[inline(never)]
-pub fn mputchar(ch: u8) {
-    unsafe {
-        let writer_ptr = &UART_WRITER as *const _ as u64;
-        let writer_ptr = writer_ptr - 0xffffffff40000000;
-        let mut writer = (*(writer_ptr as *const Mutex<UartWriter>)).lock();
-        writer.putchar(ch);
-    }
+pub fn mwriter<'a>() -> Option<MutexGuard<'a, UartWriter>> {
+    let writer_ptr = &UART_WRITER as *const _ as u64;
+    let writer_ptr = writer_ptr - 0xffffffff40000000;
+    unsafe { (*(writer_ptr as *const Mutex<UartWriter>)).try_lock() }
 }

@@ -148,7 +148,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrs!(mstatus, STATUS_MPP_S);
     csrw!(mepc, sstart as u64);
     csrw!(mcounteren, 0xffffffff);
-    csrw!(mscratch, 0x80800000 + 0x1000 * hartid);
+    csrw!(mscratch, 0x80800000 + 0x1000 * (hartid+1));
 
     asm!("LOAD_ADDRESS t0, mtrap_entry
           csrw 0x305, t0 // mtvec"
@@ -233,7 +233,6 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     // Initialize memory subsystem.
     pmap::monitor_init();
     let fdt = Fdt::new(pa2va(device_tree_blob));
-    fdt.print();
 
     // Program PLIC priorities
     for i in 1..127 {
