@@ -103,13 +103,13 @@ RVirt can currently boot a Linux guest until it starts systemd. Once started, sy
 - [x] Update PTE accessed and dirty bits
 - [x] Timers
 - [x] Expose and/or emulate peripherals
-- [ ] Address lingering bugs in boot process
+- [x] Address lingering bugs in boot process
 
 ### Functionality
 Some features I'd like to have but not neccessary for correct virtualization of a single guest:
 
 - [ ] multicore and inter-processor interrupts
-- [ ] multiple guests
+- [x] multiple guests
 - [ ] PCIe devices
 
 Other features not used by Linux are unlikely to be implemented:
