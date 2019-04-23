@@ -1,4 +1,5 @@
 use arrayvec::{ArrayString, ArrayVec};
+use core::ptr;
 
 const FDT_BEGIN_NODE: u32 = 0x01000000;
 const FDT_END_NODE: u32 = 0x02000000;
@@ -236,7 +237,7 @@ impl Fdt {
                 (["", "chosen"], "linux,initrd-start") => prop.mask(),
                 (["", "memory"], "reg") => {
                     let region = prop.address().offset(8) as *const _ as *mut MemoryRegion;
-                    (*region).size = guest_memory_size.swap_bytes()
+                    (*region).set_size(guest_memory_size);
                 }
                 _ => {},
             }
@@ -315,13 +316,17 @@ impl Fdt {
 
 #[repr(C)]
 #[derive(Clone)]
-pub struct MemoryRegion {
-    offset: u64,
-    size: u64,
-}
+pub struct MemoryRegion([u32; 4]);
 impl MemoryRegion {
-    pub fn offset(&self) -> u64 { self.offset.swap_bytes() }
-    pub fn size(&self) -> u64 { self.size.swap_bytes() }
+    pub fn offset(&self) -> u64 {
+        unsafe { ptr::read_unaligned(self as *const _ as *const u64).swap_bytes() }
+    }
+    pub fn size(&self) -> u64 {
+        unsafe { ptr::read_unaligned((self as *const _ as *const u64).offset(8)).swap_bytes() }
+    }
+    pub fn set_size(&mut self, size: u64) {
+        unsafe { ptr::write_unaligned((self as *mut _ as *mut u64).offset(8), size.swap_bytes()) }
+    }
 }
 
 #[repr(C)]
@@ -338,15 +343,15 @@ impl Property {
     pub unsafe fn read_int(&self) -> u64 {
         match self.len() {
             4 => (*(self.address().add(8) as *const u32)).swap_bytes() as u64,
-            8 => (*(self.address().add(8) as *const u64)).swap_bytes(),
+            8 => (ptr::read_unaligned(self.address().add(8) as *const u64)).swap_bytes(),
             _ => unreachable!(),
         }
     }
     pub unsafe fn read_range(&self) -> (u64, u64) {
         assert_eq!(self.len(), 16);
         (
-            (*(self.address().add(8) as *const u64)).swap_bytes(),
-            (*(self.address().add(16) as *const u64)).swap_bytes()
+            (ptr::read_unaligned(self.address().add(8) as *const u64)).swap_bytes(),
+            (ptr::read_unaligned(self.address().add(16) as *const u64)).swap_bytes()
         )
     }
     pub unsafe fn mask(&self) {
