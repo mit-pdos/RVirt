@@ -322,10 +322,10 @@ impl MemoryRegion {
         unsafe { ptr::read_unaligned(self as *const _ as *const u64).swap_bytes() }
     }
     pub fn size(&self) -> u64 {
-        unsafe { ptr::read_unaligned((self as *const _ as *const u64).offset(8)).swap_bytes() }
+        unsafe { ptr::read_unaligned((self as *const _ as *const u64).offset(1)).swap_bytes() }
     }
     pub fn set_size(&mut self, size: u64) {
-        unsafe { ptr::write_unaligned((self as *mut _ as *mut u64).offset(8), size.swap_bytes()) }
+        unsafe { ptr::write_unaligned((self as *mut _ as *mut u64).offset(1), size.swap_bytes()) }
     }
 }
 
