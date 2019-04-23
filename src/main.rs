@@ -239,20 +239,20 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
         *(pa2va(machine.plic_address + i*4) as *mut u32) = 1;
     }
 
-    assert_eq!(machine.hartids[0], 0);
-    for &i in machine.hartids.iter().skip(1) {
-        let hart_base_pa = machine.physical_memory_offset + i * pmap::HART_SEGMENT_SIZE;
+    assert_eq!(machine.harts[0].hartid, hartid);
+    for &Hart { hartid, plic_context } in machine.harts.iter().skip(1) {
+        let hart_base_pa = machine.physical_memory_offset + hartid * pmap::HART_SEGMENT_SIZE;
         let mut irq_mask = 0;
         for j in 0..4 {
-            let index = ((i-1) * 4 + j) as usize;
+            let index = ((hartid-1) * 4 + j) as usize;
             if index < machine.virtio.len() {
                 let irq = machine.virtio[index].irq;
                 assert!(irq < 32);
                 irq_mask |= 1u32 << irq;
             }
         }
-        *(pa2va(machine.plic_address + 0x201000 + 0x2000 * i) as *mut u32) = 0;
-        *(pa2va(machine.plic_address + 0x2080 + 0x100 * i) as *mut u32) = irq_mask;
+        *(pa2va(machine.plic_address + 0x200000 + 0x1000 * plic_context) as *mut u32) = 0;
+        *(pa2va(machine.plic_address + 0x2000 + 0x80 * plic_context) as *mut u32) = irq_mask;
 
         (*(pa2va(hart_base_pa) as *mut pmap::BootPageTable)).init();
         core::ptr::copy(pa2va(device_tree_blob) as *const u8,
@@ -263,7 +263,7 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
                         (machine.initrd_end - machine.initrd_start) as usize);
 
         // Send IPI
-        *(pa2va(machine.clint_address + i*4) as *mut u32) = 1;
+        *(pa2va(machine.clint_address + hartid*4) as *mut u32) = 1;
     }
     loop {}
 }

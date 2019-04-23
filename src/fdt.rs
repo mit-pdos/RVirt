@@ -1,5 +1,5 @@
 use arrayvec::{ArrayString, ArrayVec};
-use core::ptr;
+use core::{mem, ptr};
 
 const FDT_BEGIN_NODE: u32 = 0x01000000;
 const FDT_END_NODE: u32 = 0x02000000;
@@ -38,13 +38,18 @@ pub struct Device {
     pub irq: u64,
 }
 
+#[derive(Debug)]
+pub struct Hart {
+    pub hartid: u64,
+    pub plic_context: u64,
+}
 
 #[derive(Debug, Default)]
 pub struct MachineMeta {
     pub physical_memory_offset: u64,
     pub physical_memory_size: u64,
 
-    pub hartids: ArrayVec<[u64; 16]>,
+    pub harts: ArrayVec<[Hart; 16]>,
 
     pub uart_type: Option<UartType>,
     pub uart_address: u64,
@@ -168,6 +173,13 @@ impl Fdt {
         let mut virtio_address_map = AddressMap::default();
         let mut virtio = [(None, None); AddressMap::MAX_LEN];
 
+        // (hartid, phandle)
+        let mut cpus = [(None, None); AddressMap::MAX_LEN];
+        let mut cpu_address_map = AddressMap::default();
+
+        // hart phandle for each plic S-mode context
+        let mut plic_context_phandles = [None; 64];
+
         self.walk(|path, unit_addresses, v| {
             match v {
                 FdtVisit::Property { name, prop } => match (path, name) {
@@ -191,6 +203,15 @@ impl Fdt {
                     }
                     (["", "soc", "clint"], "reg") => clint = Some(prop.read_range().0),
                     (["", "soc", "interrupt-controller"], "reg") => plic = Some(prop.read_range().0),
+                    (["", "soc", "interrupt-controller"], "interrupts-extended") => {
+                        let s: &[u32] = prop.big_endian_slice();
+                        for i in 0..(s.len()/2) {
+                            let irq = s[i*2 + 1].swap_bytes();
+                            if irq == 9 {
+                                plic_context_phandles[i] = Some(s[i*2].swap_bytes());
+                            }
+                        }
+                    }
                     (["", "virtio_mmio"], "reg") => {
                         let index = virtio_address_map.index_of(unit_addresses[1]);
                         virtio[index].0 = Some(prop.read_range());
@@ -200,7 +221,12 @@ impl Fdt {
                         virtio[index].1 = Some(prop.read_int());
                     }
                     (["", "cpus", "cpu"], "reg") => {
-                        meta.hartids.push(prop.read_int());
+                        let index = virtio_address_map.index_of(unit_addresses[2]);
+                        cpus[index].0 = Some(prop.read_int());
+                    }
+                    (["", "cpus", "cpu", "interrupt-controller"], "phandle") => {
+                        let index = virtio_address_map.index_of(unit_addresses[2]);
+                        cpus[index].1 = Some(prop.read_int());
                     }
                     _ => {},
                 }
@@ -213,9 +239,20 @@ impl Fdt {
             meta.initrd_end = initrd_end.unwrap();
         }
 
-        meta.hartids.sort_unstable();
         meta.plic_address = plic.unwrap();
         meta.clint_address = clint.unwrap();
+
+        for &c in cpus.iter() {
+            if let (Some(hartid), Some(phandle)) = c {
+                if let Some(plic_context) = plic_context_phandles.iter().position(|&p| p == Some(phandle as u32)) {
+                    meta.harts.push(Hart {
+                        hartid,
+                        plic_context: plic_context as u64,
+                    })
+                }
+            }
+        }
+        meta.harts.sort_unstable_by_key(|h|h.hartid);
 
         for &v in virtio.iter().rev() {
             if let (Some((base_address, size)), Some(irq)) = v {
@@ -226,6 +263,7 @@ impl Fdt {
                 })
             }
         }
+        meta.virtio.sort_unstable_by_key(|v| v.base_address);
 
         meta
     }
@@ -372,6 +410,9 @@ impl Property {
             }
         }
         core::str::from_utf8(core::slice::from_raw_parts(self.address().add(8), self.len() as usize)).ok()
+    }
+    pub unsafe fn big_endian_slice<T: Sized>(&self) -> &[T] {
+        core::slice::from_raw_parts(self.address().add(8) as *const T, self.len() as usize / mem::size_of::<T>())
     }
 }
 
