@@ -50,6 +50,7 @@ mtrap_entry:
 	beq t0, t1, mexternal_interrupt
 
 unknown_cause:
+	call machine_debug_dump_state
 	j unknown_cause
 
 msoftware_interrupt:

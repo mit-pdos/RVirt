@@ -1,4 +1,5 @@
 use core::{fmt, ptr};
+use core::sync::atomic::{AtomicU32, Ordering};
 use spin::{Mutex, MutexGuard};
 use crate::fdt::UartType;
 use crate::pmap;
@@ -134,9 +135,9 @@ unsafe impl Send for UartWriter {}
 /// is initialized, this will again be updated to use virtual addresses instead of physical addresses.
 #[link_section = ".shared.data"]
 pub static UART_WRITER: Mutex<UartWriter> = Mutex::new(UartWriter {
-    pa: 0x10000000,
+    pa: 0x10010000,
     va: None,
-    inner: UartWriterInner::Ns16550a { initialized: false },
+    inner: UartWriterInner::SiFive,
 });
 
 macro_rules! print {
@@ -150,8 +151,8 @@ macro_rules! print {
     });
 }
 macro_rules! println {
-    ($fmt:expr) => (print!(concat!($fmt, "\n")));
-    ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
+    ($fmt:expr) => (print!(concat!($fmt, "\r\n")));
+    ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\r\n"), $($arg)*));
 }
 
 pub fn guest_println(hartid: u64, line: &[u8]) {
@@ -176,5 +177,11 @@ pub fn guest_println(hartid: u64, line: &[u8]) {
 pub fn mwriter<'a>() -> Option<MutexGuard<'a, UartWriter>> {
     let writer_ptr = &UART_WRITER as *const _ as u64;
     let writer_ptr = writer_ptr - 0xffffffff40000000;
-    unsafe { (*(writer_ptr as *const Mutex<UartWriter>)).try_lock() }
+    unsafe {
+        let writer = &*(writer_ptr as *const Mutex<UartWriter>);
+//        writer.force_unlock();
+        let m = writer.try_lock();
+        if m.is_some() { return m; }
+        Some(writer.lock())
+    }
 }

@@ -125,38 +125,67 @@ global_asm!(include_str!("mcode.S"));
 #[naked]
 #[no_mangle]
 #[link_section = ".text.entrypoint"]
-unsafe fn _start() {
+unsafe fn _start(hartid: u64, device_tree_blob: u64) {
     asm!("li sp, 0x80a00000
           beqz a0, stack_init_done
-          li sp, 0x80200000
+          li sp, 0x83200000
           slli t0, a0, 30
           add sp, sp, t0
           stack_init_done: " :::: "volatile");
 
-    let hartid = reg!(a0);
-    let device_tree_blob = reg!(a1);
+    // let hartid = reg!(a0);
+    // let device_tree_blob = reg!(a1);
+    // asm!("" :::: "volatile");
+
+    while hartid == 0 {}
+    // crate::machdebug::machine_debug_puts("[STARTED HART]");
+    while hartid > 1 {}
+    // Reset the UART
+    //*(0x10010008 as *mut u32) = 0;
+    *(0x1001000c as *mut u32) = 0;
+    *(0x10010010 as *mut u32) = 0;
+
+    // crate::machdebug::machine_debug_puts("hartid=");
+    // crate::machdebug::machine_debug_putint(hartid);
+    // crate::machdebug::machine_debug_puts("\r\nmhartid=");
+    // crate::machdebug::machine_debug_putint(csrr!(mhartid));
+    // crate::machdebug::machine_debug_puts("\r\n");
     mstart(hartid, device_tree_blob);
 }
 
 #[link_section = ".text.init"]
 #[inline(never)]
 unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
+    use crate::machdebug::*;
     // Initialize some control registers
-    csrs!(mideleg, 0x0222);
-    csrs!(medeleg, 0xb1ff);
-    csrw!(mie, 0x888);
+    // csrw!(medeleg, 0xb1ff);
+    // csrw!(mideleg, 0x0222);
+    csrw!(mie, 0/*0x888*/);
+    csrw!(sie, 0);
+    csrc!(mstatus, STATUS_MPP_M);
     csrs!(mstatus, STATUS_MPP_S);
     csrw!(mepc, sstart as u64);
     csrw!(mcounteren, 0xffffffff);
     csrw!(mscratch, 0x80800000 + 0x1000 * (hartid+1));
 
+    // machine_debug_puts("A\r\n");
+
+    csrw!(medeleg, 0);
+    csrw!(mideleg, 0);
+
     asm!("LOAD_ADDRESS t0, mtrap_entry
           csrw 0x305, t0 // mtvec"
          ::: "t0"  : "volatile");
 
+    csrw!(pmpaddr0, 0xffffffff_ffffffff);
+    csrw!(pmpcfg0, 0x1f);
+    // machine_debug_puts("A\r\n");
+
     // Minimal page table to boot into S mode.
     *((boot_page_table_pa()) as *mut u64) = 0x00000000 | 0xcf;
+    *((boot_page_table_pa()+8) as *mut u64) = 0x10000000 | 0xcf;
     *((boot_page_table_pa()+16) as *mut u64) = 0x20000000 | 0xcf;
+    *((boot_page_table_pa()+24) as *mut u64) = 0x30000000 | 0xcf;
     *((boot_page_table_pa()+4088) as *mut u64) = 0x20000000 | 0xcf;
     csrw!(satp, 8 << 60 | (boot_page_table_pa() >> 12));
 
@@ -169,14 +198,22 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
 
     const LXR: u64 = 0x9d; // Lock + Execute + Read
     const LRW: u64 = 0x9b; // Lock + Read + Write
-
-    // Text segment
-    csrw!(pmpaddr0, pmpaddr(0x80000000, 2<<20));
-    csrs!(pmpcfg0, LXR);
+    // machine_debug_puts("A\r\n");
 
     // Shared data segment
-    csrw!(pmpaddr1, pmpaddr(0x80200000, 2<<20));
-    csrs!(pmpcfg0, LRW << 8);
+    // csrw!(pmpaddr0, 0xffffffff_ffffffff);
+    // csrw!(pmpcfg0, 0x1f);
+    // machine_debug_puts("I\n");
+
+    // // Text segment
+    // csrw!(pmpaddr0, pmpaddr(0x80000000, 2<<20));
+    // csrs!(pmpcfg0, LXR);
+    // machine_debug_puts("H\n");
+
+    // // Shared data segment
+    // csrw!(pmpaddr1, pmpaddr(0x80200000, 2<<20));
+    // csrs!(pmpcfg0, LRW << 8);
+    // machine_debug_puts("I\n");
 
     // // M-mode stack
     // csrw!(pmpaddr2, pmpaddr(0x80180000, 1<<19));
@@ -186,7 +223,10 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     // csrw!(pmpaddr2, pmpaddr(0x80180000, 1<<19));
     // csrs!(pmpcfg0, LOCKED << 32);
 
-    if hartid > 0 {
+    // machine_debug_puts("J\r\n");
+
+    if hartid > 1 && false {
+        machine_debug_puts("L\n");
         let base_address = (1 << 30) * (hartid + 2);
         csrw!(satp, 8 << 60 | (base_address >> 12));
         asm!("mv sp, $0
@@ -194,35 +234,87 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
              "r"(base_address + (4<<20) + pmap::DIRECT_MAP_OFFSET),
              "r"(base_address + 4096) ::
              "volatile");
+        machine_debug_puts("M\n");
         asm!("LOAD_ADDRESS t0, start_hart
              csrw 0x305, t0 // mtvec"
              ::: "t0"  : "volatile");
+        machine_debug_puts("N\n");
         csrsi!(mstatus, 0x8); //MIE
         loop {}
     } else {
+        machine_debug_puts("device_tree_blob=");
+        machine_debug_puthex64(device_tree_blob);
+        // machine_debug_puts("\r\nmepc=");
+        // machine_debug_puthex64(csrr!(mepc));
+        // machine_debug_puts("\r\nsstart=");
+        // machine_debug_puthex64(sstart as u64);
+        // machine_debug_puts("\r\nsatp=");
+        // machine_debug_puthex64(csrr!(satp));
+        // machine_debug_puts("\r\nmstatus=");
+        // machine_debug_puthex64(csrr!(mstatus));
+        machine_debug_puts("\r\n");
+        // crate::pmp::debug_pmp();
+
+        // // // let addr = csrr!(mepc);
+        //  csrs!(mstatus, 1 << 17);
+        // let v0 = (*((sstart as u64) as *mut u16)) as u64;
+        // // let v1 = (*((sstart as u64 + 2) as *mut u16)) as u64;
+        // // let v2 = (*((sstart as u64 + 4) as *mut u16)) as u64;
+        // // let v3 = (*((sstart as u64 + 6) as *mut u16)) as u64;
+        // csrc!(mstatus, 1 << 17);
+        // machine_debug_puts("mepc[0]=");
+        // machine_debug_puthex64(v0);
+        // machine_debug_puts("\r\n");
+        // machine_debug_puthex64(v1);
+        // machine_debug_puts("\r\n*mepc[2]=");
+        // machine_debug_puthex64(v2);
+        // machine_debug_puts("\r\n*mepc[3]=");
+        // machine_debug_puthex64(v3);
+        // machine_debug_puts("\r\n");
+        // // asm!("c.ebreak" :::: "volatile");
+        // // machine_debug_puts("Did ebreak\r\n");
+
+        // machine_debug_puthex64(reg!(sp));
+        // machine_debug_puts("\r\n");
+
+        // machine_debug_puts("About to jump into guest\r\n");
+        let writer_ptr = &crate::print::UART_WRITER as *const _ as u64;
+        let writer_ptr = writer_ptr - 0xffffffff40000000;
+        (*(writer_ptr as *const spin::Mutex<crate::print::UartWriter>)).force_unlock();
+
         asm!("mv a0, $1
               mv a1, $0
+              li t0, 0xffffffff00000000
+              add sp, sp, t0
               mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1" : "volatile");
     }
 }
 
 unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
-    asm!("li t0, 0xffffffff40000000
-          add sp, sp, t0" ::: "t0" : "volatile");
     csrw!(stvec, (||{panic!("Trap on hart 0?!")}) as fn() as *const () as u64);
-    assert_eq!(hartid, 0);
-
+    println!("Hello World!!!!!!!!");
+    println!("hartid={}", hartid);
+    println!("device_tree_blob={}", device_tree_blob);
+    // assert_eq!(hartid, 1);
+    println!("A");
     // Read and process host FDT.
     let fdt = Fdt::new(device_tree_blob);
+    println!("B");
     assert!(fdt.magic_valid());
+    println!("C");
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
+    println!("D");
     assert!(fdt.total_size() < 64 * 1024);
+    println!("E");
     let machine = fdt.parse();
+    fdt.print();
 
     // Initialize UART
     if let Some(ty) = machine.uart_type {
         print::UART_WRITER.lock().init(machine.uart_address, ty);
     }
+
+    println!("B: Hello world!");
 
     assert!(machine.initrd_end <= machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE);
     assert!(machine.initrd_end - machine.initrd_start <= pmap::HEAP_SIZE);
@@ -232,12 +324,15 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
 
     // Initialize memory subsystem.
     pmap::monitor_init();
+    println!("A");
     let fdt = Fdt::new(pa2va(device_tree_blob));
+    println!("B");
 
     // Program PLIC priorities
     for i in 1..127 {
         *(pa2va(machine.plic_address + i*4) as *mut u32) = 1;
     }
+    println!("C");
 
     assert_eq!(machine.hartids[0], 0);
     for &i in machine.hartids.iter().skip(1) {

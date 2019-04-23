@@ -101,8 +101,8 @@ pub fn debug_pmp() {
     let hart = csrr!(mhartid);
     machine_debug_puts("=========== PMP CONFIGURATION STATE (hart ");
     machine_debug_putint(hart);
-    machine_debug_puts(") ==========\n");
-    machine_debug_puts("          R W X AMODE RES1 RES2 LOCK   ADDRESS (raw)\n");
+    machine_debug_puts(") ==========\r\n");
+    machine_debug_puts("          R W X AMODE RES1 RES2 LOCK   ADDRESS (raw)\r\n");
     for entry in 0..16 {
         let config = read_pmp_config(entry);
         let address = read_pmp_address(entry);
@@ -148,8 +148,8 @@ pub fn debug_pmp() {
             machine_debug_puts("     ");
         }
         machine_debug_puthex64(address);
-        machine_debug_puts("\n");
+        machine_debug_puts("\r\n");
     }
-    machine_debug_puts("=============== END CONFIGURATION STATE ===============\n");
+    machine_debug_puts("=============== END CONFIGURATION STATE ===============\r\n");
     machine_debug_mark_end();
 }

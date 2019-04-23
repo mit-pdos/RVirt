@@ -92,6 +92,36 @@ pub fn machine_debug_mark_end() {
 #[link_section = ".text.init"]
 #[no_mangle]
 pub fn machine_debug_newline() {
-    machine_debug_puts("\n");
+    machine_debug_puts("\r\n");
+}
+
+#[link_section = ".text.init"]
+#[no_mangle]
+pub fn machine_debug_dump_state() {
+    // for _ in 0..1000 {
+    //     unsafe { asm!("nop" :::: "volatile"); }
+    // }
+    // unsafe {
+    //     crate::print::UART_WRITER.force_unlock();
+    // }
+    machine_debug_puts("Dumping state...\r\n");
+    machine_debug_puts("mepc=");
+    machine_debug_puthex64(csrr!(mepc));
+    machine_debug_newline();
+
+    machine_debug_puts("mcause=");
+    machine_debug_puthex64(csrr!(mcause));
+    machine_debug_newline();
+
+    machine_debug_puts("mtval=");
+    machine_debug_puthex64(csrr!(mtval));
+    machine_debug_newline();
+
+    machine_debug_puts("mstatus=");
+    machine_debug_puthex64(csrr!(mstatus));
+    machine_debug_newline();
+
+    //crate::pmp::debug_pmp();
+    machine_debug_abort("Done.");
 }
 
