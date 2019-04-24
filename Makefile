@@ -1,5 +1,7 @@
+LD=riscv64-unknown-elf-ld
+
 release: src/*.rs src/*.S Cargo.toml src/linker.ld
-	cargo rustc --release --target riscv64imac-unknown-none-elf -- -C link-arg=-Tsrc/linker.ld  -C linker=ld.lld
+	cargo rustc --release --target riscv64imac-unknown-none-elf -- -C link-arg=-Tsrc/linker.ld  -C linker=$(LD)
 
 binary: release
 	objcopy -S -O binary --change-addresses -0x80000000 target/riscv64imac-unknown-none-elf/release/rvirt target/riscv64imac-unknown-none-elf/release/rvirt.bin

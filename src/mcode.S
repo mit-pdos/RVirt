@@ -119,12 +119,8 @@ start_hart:
 	add t0, t0, t1
 	sw zero, 0(t0)
 
-	// Set mepc to hart_entry
-	LOAD_ADDRESS ra, hart_entry
-	csrw 0x341, ra
-
 	// Set mstatus.mpp[1] = 0
 	li t0, 0x1000
 	csrc 0x300, t0
 
-	mret
+	call handle_ipi

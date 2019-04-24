@@ -33,7 +33,7 @@ impl UartWriterInner {
     fn putchar(&mut self, base_address: u64, ch: u8) {
         unsafe {
             match *self {
-                UartWriterInner::Ns16550a { ref mut initialized) => {
+                UartWriterInner::Ns16550a { ref mut initialized } => {
                     let base_address = base_address as *mut u8;
                     if !*initialized {
                         Self::initialize_ns16550a(base_address);
@@ -155,17 +155,17 @@ macro_rules! println {
     ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\r\n"), $($arg)*));
 }
 
-pub fn guest_println(hartid: u64, line: &[u8]) {
+pub fn guest_println(guestid: u64, line: &[u8]) {
     use core::fmt::Write;
     use crate::print::UART_WRITER;
     let mut writer = UART_WRITER.lock();
-    match hartid {
+    match guestid {
         1 => writer.write_str("\u{1b}[32m").unwrap(),
         2 => writer.write_str("\u{1b}[34m").unwrap(),
         _ => writer.write_str("\u{1b}[33m").unwrap(),
     }
     writer.write_str("\u{1b}[1m").unwrap();
-    writer.write_fmt(format_args!("[{}] ", hartid)).unwrap();
+    writer.write_fmt(format_args!("[{}] ", guestid)).unwrap();
     writer.write_str("\u{1b}[0m").unwrap();
     for &b in line {
         writer.putchar(b);

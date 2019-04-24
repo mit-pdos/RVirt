@@ -24,7 +24,7 @@ mod segment_layout {
 pub use segment_layout::*;
 
 #[allow(unused)]
-mod pte_flags {
+pub mod pte_flags {
     pub const PTE_VALID: u64 = 0x1;
     pub const PTE_READ: u64 = 0x2;
     pub const PTE_WRITE: u64 = 0x4;

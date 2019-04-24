@@ -28,6 +28,8 @@ pub fn read_pmp_config(entry: u8) -> u8 {
 
 #[link_section = ".text.init"]
 pub fn read_pmp_address(entry: u8) -> u64 {
+    // come up with a better solution to this
+    // (though apparently CSR instructions are hard-coded by CSR, so that might be hard?)
     match entry {
         0 => csrr!(pmpaddr0),
         1 => csrr!(pmpaddr1),
@@ -51,6 +53,8 @@ pub fn read_pmp_address(entry: u8) -> u64 {
 
 #[link_section = ".text.init"]
 pub unsafe fn write_pmp_address(entry: u8, address: u64) {
+    // come up with a better solution to this
+    // (though apparently CSR instructions are hard-coded by CSR, so that might be hard?)
     match entry {
         0 => csrw!(pmpaddr0, address),
         1 => csrw!(pmpaddr1, address),
@@ -75,24 +79,78 @@ pub unsafe fn write_pmp_address(entry: u8, address: u64) {
 // note: these updates are not atomic. don't let interrupts happen during them!
 #[link_section = ".text.init"]
 pub unsafe fn install_pmp(entry: u8, config: u8, address: u64) {
+    write_pmp_address(entry, address);
+    machine_debug_assert(read_pmp_address(entry) == address, "could not change PMP address entry");
     write_pmp_config(entry, config);
     machine_debug_assert(read_pmp_config(entry) == config, "could not change PMP config entry");
-    // come up with a better solution to this
-    // (though apparently CSR instructions are hard-coded by CSR, so that might be hard?)
-    write_pmp_address(entry, address);
 }
 
-const PMP_R: u8 = 0x1;
-const PMP_W: u8 = 0x2;
-const PMP_X: u8 = 0x4;
+#[link_section = ".text.init"]
+pub unsafe fn install_pmp_napot(entry: u8, config: u8, address: u64, size: u64) {
+    if (address & 3) != 0 {
+        machine_debug_abort("addresses must be 4-byte aligned");
+    }
+    if size == 4 {
+        install_pmp(entry, config | MODE_NA4, address >> 2);
+    } else {
+        if !size.is_power_of_two() {
+            machine_debug_abort("attempt to install not-power-of-two napot value");
+        }
+        if (address & (size - 1)) != 0 {
+            machine_debug_abort("attempt to install unnaturally-aligned address");
+        }
+        if size < 8 {
+            machine_debug_abort("attempt to install too-small napot value");
+        }
+        install_pmp(entry, config | MODE_NAPOT, (address >> 2) + (size / 8 - 1));
+    }
+}
+
+// returns (bits, remaining).
+#[link_section = ".text.init"]
+fn extract_napot_bits(address: u64) -> (u8, u64) {
+    let mut bits = 0;
+    let mut shifted = address;
+    while (shifted & 1) == 1 {
+        bits += 1;
+        shifted >>= 1;
+    }
+    (bits, shifted << bits)
+}
+
+// if this is the first entry, set lastconfig = lastaddressreg = 0
+// return value is [low, high) -- so low is inclusive and high is exclusive
+#[link_section = ".text.init"]
+pub fn decode_pmp_range(config: u8, address: u64, lastconfig: u8, lastaddress: u64) -> (u64, u64) {
+    match (config >> PMP_A_SHIFT) & 3 {
+        PMP_A_OFF => (0, 0),
+        PMP_A_TOR => (lastaddress << 2, address << 2),
+        PMP_A_NA4 => (address << 2, (address << 2) + 4),
+        PMP_A_NAPOT => {
+            let (bits, address) = extract_napot_bits(address);
+            (address << 2, (address << 2) + (8 << bits))
+        }
+        _ => unreachable!()
+    }
+}
+
+pub const READ: u8 = 0x1;
+pub const WRITE: u8 = 0x2;
+pub const EXEC: u8 = 0x4;
+// for decoding
 const PMP_A_SHIFT: u8 = 3;
 const PMP_A_OFF: u8 = 0x0;
 const PMP_A_TOR: u8 = 0x1;
 const PMP_A_NA4: u8 = 0x2;
 const PMP_A_NAPOT: u8 = 0x3;
-const PMP_RES1: u8 = 0x20;
-const PMP_RES2: u8 = 0x40;
-const PMP_LOCK: u8 = 0x80;
+// for encoding
+pub const MODE_OFF: u8 = PMP_A_OFF << PMP_A_SHIFT;
+pub const MODE_TOR: u8 = PMP_A_TOR << PMP_A_SHIFT;
+pub const MODE_NA4: u8 = PMP_A_NA4 << PMP_A_SHIFT;
+pub const MODE_NAPOT: u8 = PMP_A_NAPOT << PMP_A_SHIFT;
+pub const RESERVED1: u8 = 0x20;
+pub const RESERVED2: u8 = 0x40;
+pub const LOCK: u8 = 0x80;
 
 /** prints out as much information on the PMP state as possible in M-mode */
 #[link_section = ".text.init"]
@@ -102,7 +160,9 @@ pub fn debug_pmp() {
     machine_debug_puts("=========== PMP CONFIGURATION STATE (hart ");
     machine_debug_putint(hart);
     machine_debug_puts(") ==========\r\n");
-    machine_debug_puts("          R W X AMODE RES1 RES2 LOCK   ADDRESS (raw)\r\n");
+    machine_debug_puts("          R W X AMODE RES1 RES2 LOCK   ADDRESS (raw)      ADDRESS (low)      ADDRESS (high)\r\n");
+    let mut lastconfig= 0;
+    let mut lastaddress = 0;
     for entry in 0..16 {
         let config = read_pmp_config(entry);
         let address = read_pmp_address(entry);
@@ -110,45 +170,55 @@ pub fn debug_pmp() {
         machine_debug_putint(entry as u64);
         if entry < 10 { machine_debug_puts(" "); }
         machine_debug_puts(" ==> ");
-        if config & PMP_R != 0 {
+        if config & READ != 0 {
             machine_debug_puts("R ");
         } else {
             machine_debug_puts("- ");
         }
-        if config & PMP_W != 0 {
+        if config & WRITE != 0 {
             machine_debug_puts("W ");
         } else {
             machine_debug_puts("- ");
         }
-        if config & PMP_X != 0 {
+        if config & EXEC != 0 {
             machine_debug_puts("X ");
         } else {
             machine_debug_puts("- ");
         }
-        match (config >> PMP_A_SHIFT) & 3 {
+        let mode = (config >> PMP_A_SHIFT) & 3;
+        match mode {
             PMP_A_OFF => machine_debug_puts(" OFF  "),
             PMP_A_TOR => machine_debug_puts(" TOR  "),
             PMP_A_NA4 => machine_debug_puts(" NA4  "),
             PMP_A_NAPOT => machine_debug_puts("NAPOT "),
             _ => unreachable!()
         };
-        if config & PMP_RES1 != 0 {
+        if config & RESERVED1 != 0 {
             machine_debug_puts("res1 ");
         } else {
             machine_debug_puts("     ");
         }
-        if config & PMP_RES2 != 0 {
+        if config & RESERVED2 != 0 {
             machine_debug_puts("res2 ");
         } else {
             machine_debug_puts("     ");
         }
-        if config & PMP_LOCK != 0 {
+        if config & LOCK != 0 {
             machine_debug_puts("lock ");
         } else {
             machine_debug_puts("     ");
         }
         machine_debug_puthex64(address);
+        if mode != PMP_A_OFF {
+            let (low, high) = decode_pmp_range(config, address, lastconfig, lastaddress);
+            machine_debug_puts(" ");
+            machine_debug_puthex64(low);
+            machine_debug_puts(" ");
+            machine_debug_puthex64(high - 1);
+        }
         machine_debug_puts("\r\n");
+        lastconfig = config;
+        lastaddress = address;
     }
     machine_debug_puts("=============== END CONFIGURATION STATE ===============\r\n");
     machine_debug_mark_end();

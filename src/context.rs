@@ -45,7 +45,7 @@ pub struct Uart {
     pub input_bytes_ready: usize,
 
     pub line_buffer: ArrayVec<[u8; 256]>,
-    pub hartid: u64,
+    pub guestid: u64,
 }
 
 pub struct HostClint {
@@ -242,11 +242,11 @@ impl Uart {
     pub fn output_byte(&mut self, value: u8) {
         let len = self.line_buffer.len();
         if len > 0 && self.line_buffer[len - 1] == '\r' as u8 && value != '\n' as u8 {
-            print::guest_println(self.hartid, &self.line_buffer);
+            print::guest_println(self.guestid, &self.line_buffer);
             self.line_buffer.clear();
         }
         if value == '\n' as u8 || self.line_buffer.is_full() {
-            print::guest_println(self.hartid, &self.line_buffer);
+            print::guest_println(self.guestid, &self.line_buffer);
             self.line_buffer.clear();
         } else {
             self.line_buffer.push(value);
@@ -383,11 +383,12 @@ pub unsafe fn initialize(machine: &MachineMeta,
                          shadow_page_tables: PageTables,
                          guest_memory: MemoryRegion,
                          guest_shift: u64,
-                         hartid: u64) {
+                         hartid: u64,
+                         guestid: u64) {
     let mut irq_map = [0; 512];
     let mut virtio_devices = ArrayVec::new();
     for i in 0..4 {
-        let index = (hartid as usize - 1) * 4 + i;
+        let index = (guestid as usize - 1) * 4 + i;
         if index < machine.virtio.len() {
             virtio_devices.push(virtio::Device::new(machine.virtio[index].base_address));
             let host_irq = machine.virtio[index].irq;
@@ -402,6 +403,8 @@ pub unsafe fn initialize(machine: &MachineMeta,
             irq_map[host_irq as usize] = guest_irq.unwrap() as u16;
         }
     }
+
+    let plic_context = machine.harts.iter().find(|h| h.hartid == hartid).unwrap().plic_context;
 
     *CONTEXT.lock() = Some(Context{
         csrs: ControlRegisters{
@@ -429,7 +432,7 @@ pub unsafe fn initialize(machine: &MachineMeta,
             input_fifo: [0; 16],
             input_bytes_ready: 0,
             line_buffer: ArrayVec::new(),
-            hartid,
+            guestid,
         },
         virtio: VirtIO {
             devices: virtio_devices,
@@ -446,7 +449,7 @@ pub unsafe fn initialize(machine: &MachineMeta,
         },
         host_plic: HostPlic {
             claim_clear: MemoryRegion::with_base_address(
-                pmap::pa2va(machine.plic_address + 0x201004 + 0x2000 * hartid), 0, 8),
+                pmap::pa2va(machine.plic_address + 0x200004 + 0x1000 * plic_context), 0, 8),
         },
         irq_map,
     });

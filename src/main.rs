@@ -35,10 +35,12 @@
 //!  0x 80200000 - 0x 80400000  shared data
 //!  0x 80400000 - 0x 80600000  hart 0 data segment
 //!  0x 80600000 - 0x 80800000  hart 0 S-mode stack
-//!  0x 80800000 - 0x 80801000  hart 0 M-mode stack
-//!  0x 80801000 - 0x 80802000  hart 1 M-mode stack
-//!  0x 80802000 - 0x 80803000  hart 2 M-mode stack
-//!  0x 80803000 - 0x 80804000  hart 3 M-mode stack
+//!  0x 80800000 - 0x 80810000  hart 0 M-mode stack
+//!  0x 80810000 - 0x 80820000  hart 1 M-mode stack
+//!  0x 80820000 - 0x 80830000  hart 2 M-mode stack
+//!  0x 80830000 - 0x 80840000  hart 3 M-mode stack
+//!  0x 808xxxxx - 0x 808xxxxx  ...
+//!  0x 808f0000 - 0x 80900000  hart 15 M-mode stack
 //!  0x c0000000 - 0x c0200000  hart 1 stack
 //!  0x c0200000 - 0x c0400000  hart 1 data segment
 //!  0x c0400000 - 0x c4000000  hart 1 heap
@@ -60,7 +62,8 @@
 //!    note: the Sv39 addressing mode is in use here
 //! ```text
 //!  VIRTUAL START      - VIRTUAL END          PHYS START   PHYS END     MODE   REGION
-//!  0x00000000         - 0x        80000000   0x00000000 - 0x80000000   RWX    QEMU memory sections
+//!  0x        00000000 - 0x        40000000   0x00000000 - 0x40000000   RWX    QEMU memory sections
+//!  0x        80000000 - 0x        c0000000   0x80000000 - 0xC0000000   RWX    hypervisor memory
 //!  0xffffffffc0000000 - 0xffffffffffffffff   0x80000000 - 0xC0000000   RWX    hypervisor memory
 //! ```
 //!
@@ -96,23 +99,30 @@ mod riscv;
 mod print;
 
 mod backtrace;
+mod constants;
 mod context;
 mod csr;
 mod elf;
 mod fdt;
+mod ipi;
 mod machdebug;
 mod memory_region;
 mod pfault;
 mod plic;
 mod pmap;
 mod pmp;
+mod pmptest;
 mod sum;
 mod trap;
 mod virtio;
 
+use core::sync::atomic::{AtomicBool, Ordering};
+use constants::mstatic;
 use fdt::*;
+use ipi::{REASON_ARRAY, Reason};
 use trap::constants::*;
 use pmap::{boot_page_table_pa, pa2va};
+use pmptest::pmptest_mstart;
 
 global_asm!(include_str!("mcode.S"));
 
@@ -122,35 +132,29 @@ global_asm!(include_str!("mcode.S"));
 #[start] fn start(_argc: isize, _argv: *const *const u8) -> isize {0}
 #[no_mangle] fn abort() -> ! { println!("Abort!"); loop {}}
 
+const TEST_PMP: bool = false;
+
+/// First Hart to set this to false gets to run domain 0.
+static HART_LOTTERY: AtomicBool = AtomicBool::new(true);
+
 #[naked]
 #[no_mangle]
 #[link_section = ".text.entrypoint"]
-unsafe fn _start(hartid: u64, device_tree_blob: u64) {
-    asm!("li sp, 0x80a00000
-          beqz a0, stack_init_done
-          li sp, 0x83200000
-          slli t0, a0, 30
-          add sp, sp, t0
-          stack_init_done: " :::: "volatile");
+unsafe fn _start() {
+    asm!("li t0 0x80000000
+          csrw mtvec, t0
+          csrw stvec, zero
+          li sp, 0x80810000
+          slli t0, a0, 16
+          add sp, sp, t0" :::: "volatile");
 
-    // let hartid = reg!(a0);
-    // let device_tree_blob = reg!(a1);
-    // asm!("" :::: "volatile");
-
-    while hartid == 0 {}
-    // crate::machdebug::machine_debug_puts("[STARTED HART]");
-    while hartid > 1 {}
-    // Reset the UART
-    //*(0x10010008 as *mut u32) = 0;
-    *(0x1001000c as *mut u32) = 0;
-    *(0x10010010 as *mut u32) = 0;
-
-    // crate::machdebug::machine_debug_puts("hartid=");
-    // crate::machdebug::machine_debug_putint(hartid);
-    // crate::machdebug::machine_debug_puts("\r\nmhartid=");
-    // crate::machdebug::machine_debug_putint(csrr!(mhartid));
-    // crate::machdebug::machine_debug_puts("\r\n");
-    mstart(hartid, device_tree_blob);
+    let hartid = reg!(a0);
+    let device_tree_blob = reg!(a1);
+    if TEST_PMP {
+        pmptest_mstart(hartid, device_tree_blob);
+    } else {
+        mstart(hartid, device_tree_blob);
+    }
 }
 
 #[link_section = ".text.init"]
@@ -166,7 +170,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrs!(mstatus, STATUS_MPP_S);
     csrw!(mepc, sstart as u64);
     csrw!(mcounteren, 0xffffffff);
-    csrw!(mscratch, 0x80800000 + 0x1000 * (hartid+1));
+    csrw!(mscratch, 0x80810000 + 0x10000 * hartid);
 
     // machine_debug_puts("A\r\n");
 
@@ -189,31 +193,12 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     *((boot_page_table_pa()+4088) as *mut u64) = 0x20000000 | 0xcf;
     csrw!(satp, 8 << 60 | (boot_page_table_pa() >> 12));
 
-    // Physical Memory Protection
-    fn pmpaddr(addr: u64, size: u64) -> u64 {
-        assert!(size.is_power_of_two());
-        assert!(size >= 16);
-        (addr + (size/16 - 1))
-    }
-
-    const LXR: u64 = 0x9d; // Lock + Execute + Read
-    const LRW: u64 = 0x9b; // Lock + Read + Write
-    // machine_debug_puts("A\r\n");
-
+    // Text segment
+    pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
     // Shared data segment
-    // csrw!(pmpaddr0, 0xffffffff_ffffffff);
-    // csrw!(pmpcfg0, 0x1f);
-    // machine_debug_puts("I\n");
-
-    // // Text segment
-    // csrw!(pmpaddr0, pmpaddr(0x80000000, 2<<20));
-    // csrs!(pmpcfg0, LXR);
-    // machine_debug_puts("H\n");
-
-    // // Shared data segment
-    // csrw!(pmpaddr1, pmpaddr(0x80200000, 2<<20));
-    // csrs!(pmpcfg0, LRW << 8);
-    // machine_debug_puts("I\n");
+    pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 0x200000);
+    // Everything else unrestricted
+    pmp::install_pmp_napot(2, pmp::READ | pmp::WRITE | pmp::EXEC, 0, 16 << 30);
 
     // // M-mode stack
     // csrw!(pmpaddr2, pmpaddr(0x80180000, 1<<19));
@@ -223,81 +208,28 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     // csrw!(pmpaddr2, pmpaddr(0x80180000, 1<<19));
     // csrs!(pmpcfg0, LOCKED << 32);
 
-    // machine_debug_puts("J\r\n");
-
-    if hartid > 1 && false {
-        machine_debug_puts("L\n");
-        let base_address = (1 << 30) * (hartid + 2);
-        csrw!(satp, 8 << 60 | (base_address >> 12));
-        asm!("mv sp, $0
-              mv a1, $1" ::
-             "r"(base_address + (4<<20) + pmap::DIRECT_MAP_OFFSET),
-             "r"(base_address + 4096) ::
-             "volatile");
-        machine_debug_puts("M\n");
+    if mstatic(&HART_LOTTERY).swap(false,  Ordering::SeqCst) {
+        asm!("mv a0, $1
+              mv a1, $0
+              mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1" : "volatile");
+    } else  {
         asm!("LOAD_ADDRESS t0, start_hart
              csrw 0x305, t0 // mtvec"
              ::: "t0"  : "volatile");
-        machine_debug_puts("N\n");
         csrsi!(mstatus, 0x8); //MIE
         loop {}
-    } else {
-        machine_debug_puts("device_tree_blob=");
-        machine_debug_puthex64(device_tree_blob);
-        // machine_debug_puts("\r\nmepc=");
-        // machine_debug_puthex64(csrr!(mepc));
-        // machine_debug_puts("\r\nsstart=");
-        // machine_debug_puthex64(sstart as u64);
-        // machine_debug_puts("\r\nsatp=");
-        // machine_debug_puthex64(csrr!(satp));
-        // machine_debug_puts("\r\nmstatus=");
-        // machine_debug_puthex64(csrr!(mstatus));
-        machine_debug_puts("\r\n");
-        // crate::pmp::debug_pmp();
-
-        // // // let addr = csrr!(mepc);
-        //  csrs!(mstatus, 1 << 17);
-        // let v0 = (*((sstart as u64) as *mut u16)) as u64;
-        // // let v1 = (*((sstart as u64 + 2) as *mut u16)) as u64;
-        // // let v2 = (*((sstart as u64 + 4) as *mut u16)) as u64;
-        // // let v3 = (*((sstart as u64 + 6) as *mut u16)) as u64;
-        // csrc!(mstatus, 1 << 17);
-        // machine_debug_puts("mepc[0]=");
-        // machine_debug_puthex64(v0);
-        // machine_debug_puts("\r\n");
-        // machine_debug_puthex64(v1);
-        // machine_debug_puts("\r\n*mepc[2]=");
-        // machine_debug_puthex64(v2);
-        // machine_debug_puts("\r\n*mepc[3]=");
-        // machine_debug_puthex64(v3);
-        // machine_debug_puts("\r\n");
-        // // asm!("c.ebreak" :::: "volatile");
-        // // machine_debug_puts("Did ebreak\r\n");
-
-        // machine_debug_puthex64(reg!(sp));
-        // machine_debug_puts("\r\n");
-
-        // machine_debug_puts("About to jump into guest\r\n");
-        let writer_ptr = &crate::print::UART_WRITER as *const _ as u64;
-        let writer_ptr = writer_ptr - 0xffffffff40000000;
-        (*(writer_ptr as *const spin::Mutex<crate::print::UartWriter>)).force_unlock();
-
-        asm!("mv a0, $1
-              mv a1, $0
-              li t0, 0xffffffff00000000
-              add sp, sp, t0
-              mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1" : "volatile");
     }
 }
 
 unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
-    csrw!(stvec, (||{panic!("Trap on hart 0?!")}) as fn() as *const () as u64);
-    println!("Hello World!!!!!!!!");
-    println!("hartid={}", hartid);
-    println!("device_tree_blob={}", device_tree_blob);
-    // assert_eq!(hartid, 1);
-    println!("A");
-    // Read and process host FDT.
+    asm!("li t0, 0xffffffff40000000
+          add sp, sp, t0" ::: "t0" : "volatile");
+    csrw!(stvec, (||{
+        println!("scause={:x}", csrr!(scause));
+        println!("sepc={:x}", csrr!(sepc));
+        panic!("Trap on dom0 hart?!")
+    }) as fn() as *const () as u64);
+
     let fdt = Fdt::new(device_tree_blob);
     println!("B");
     assert!(fdt.magic_valid());
@@ -316,6 +248,8 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
 
     println!("B: Hello world!");
 
+    // Do some sanity checks now that the UART is initialized and we have a better chance of
+    // successfully printing output.
     assert!(machine.initrd_end <= machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE);
     assert!(machine.initrd_end - machine.initrd_start <= pmap::HEAP_SIZE);
     if machine.initrd_end == 0 {
@@ -334,18 +268,20 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     }
     println!("C");
 
-    assert_eq!(machine.harts[0].hartid, hartid);
-    for &Hart { hartid, plic_context } in machine.harts.iter().skip(1) {
-        let hart_base_pa = machine.physical_memory_offset + hartid * pmap::HART_SEGMENT_SIZE;
+    let mut guestid = 1;
+    for &Hart { hartid, plic_context } in machine.harts.iter().filter(|h| h.hartid != hartid) {
+        let hart_base_pa = machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE * guestid;
+
         let mut irq_mask = 0;
         for j in 0..4 {
-            let index = ((hartid-1) * 4 + j) as usize;
+            let index = ((guestid-1) * 4 + j) as usize;
             if index < machine.virtio.len() {
                 let irq = machine.virtio[index].irq;
                 assert!(irq < 32);
                 irq_mask |= 1u32 << irq;
             }
         }
+
         *(pa2va(machine.plic_address + 0x200000 + 0x1000 * plic_context) as *mut u32) = 0;
         *(pa2va(machine.plic_address + 0x2000 + 0x80 * plic_context) as *mut u32) = irq_mask;
 
@@ -358,18 +294,27 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
                         (machine.initrd_end - machine.initrd_start) as usize);
 
         // Send IPI
+        *REASON_ARRAY[hartid as usize].lock() = Some(Reason::EnterSupervisor {
+            a0: hartid,
+            a1: hart_base_pa + 4096,
+            a2: hart_base_pa,
+            a3: guestid as u64,
+            sp: hart_base_pa + (4<<20) + pmap::DIRECT_MAP_OFFSET,
+            satp: 8 << 60 | (hart_base_pa >> 12),
+            mepc: hart_entry as u64,
+        });
         *(pa2va(machine.clint_address + hartid*4) as *mut u32) = 1;
+
+        guestid += 1;
     }
     loop {}
 }
 
 #[no_mangle]
-unsafe fn hart_entry(hartid: u64, device_tree_blob: u64) {
+unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, hart_base_pa: u64, guestid: u64) {
     csrw!(stvec, crate::trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
     csrs!(sstatus, trap::constants::STATUS_SUM);
-
-    let hart_base_pa = (1 << 30) * (hartid + 2);
 
     // Read and process host FDT.
     let fdt = Fdt::new(pa2va(device_tree_blob));
@@ -399,7 +344,7 @@ unsafe fn hart_entry(hartid: u64, device_tree_blob: u64) {
     });
 
     // Initialize context
-    context::initialize(&machine, &guest_machine, shadow_page_tables, guest_memory, guest_shift, hartid);
+    context::initialize(&machine, &guest_machine, shadow_page_tables, guest_memory, guest_shift, hartid, guestid);
 
     // Jump into the guest kernel.
     asm!("mv a1, $0 // dtb = guest_dtb
