@@ -198,9 +198,13 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
         pmp::debug_pmp();
         pagedebug::debug_paging();
 
-        asm!("mv a0, $1
-              mv a1, $0
-              mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1" : "volatile");
+        // TODO: figure out why we have to do this dance instead of just assigning things directly
+        // i.e. why is it that rust will assign a0/a1? how do we stop that?
+        asm!("mv x30, $1
+              mv x31, $0
+              mv a0, x30
+              mv a1, x31
+              mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1", "x30", "x31" : "volatile");
     } else  {
         asm!("LOAD_ADDRESS t0, start_hart
              csrw 0x305, t0 // mtvec"
