@@ -32,7 +32,7 @@ impl UartWriterInner {
     fn putchar(&mut self, base_address: u64, ch: u8) {
         unsafe {
             match *self {
-                UartWriterInner::Ns16550a { ref mut initialized) => {
+                UartWriterInner::Ns16550a { ref mut initialized } => {
                     let base_address = base_address as *mut u8;
                     if !*initialized {
                         Self::initialize_ns16550a(base_address);
