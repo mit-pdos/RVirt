@@ -37,9 +37,9 @@ pub unsafe fn pmptest_mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(satp, 8 << 60 | (boot_page_table_pa() >> 12));
 
     // Text segment
-    pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 2<<20);
+    pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
     // Shared data segment
-    pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 2<<20);
+    pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 0x200000);
 
     // // M-mode stack
     // csrw!(pmpaddr2, pmpaddr(0x80180000, 1<<19));
