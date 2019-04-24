@@ -107,6 +107,7 @@ mod fdt;
 mod ipi;
 mod machdebug;
 mod memory_region;
+mod pagedebug;
 mod pfault;
 mod plic;
 mod pmap;
@@ -190,6 +191,9 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     // csrs!(pmpcfg0, LOCKED << 32);
 
     if mstatic(&HART_LOTTERY).swap(false,  Ordering::SeqCst) {
+        pmp::debug_pmp();
+        pagedebug::debug_paging();
+
         asm!("mv a0, $1
               mv a1, $0
               mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1" : "volatile");

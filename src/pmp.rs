@@ -157,9 +157,9 @@ pub const LOCK: u8 = 0x80;
 pub fn debug_pmp() {
     machine_debug_mark_begin();
     let hart = csrr!(mhartid);
-    machine_debug_puts("=========== PMP CONFIGURATION STATE (hart ");
+    machine_debug_puts("============================== PMP CONFIGURATION STATE (hart ");
     machine_debug_putint(hart);
-    machine_debug_puts(") ==========\n");
+    machine_debug_puts(") =============================\n");
     machine_debug_puts("          R W X AMODE RES1 RES2 LOCK   ADDRESS (raw)      ADDRESS (low)      ADDRESS (high)\n");
     let mut lastconfig= 0;
     let mut lastaddress = 0;
@@ -220,6 +220,6 @@ pub fn debug_pmp() {
         lastconfig = config;
         lastaddress = address;
     }
-    machine_debug_puts("=============== END CONFIGURATION STATE ===============\n");
+    machine_debug_puts("================================== END CONFIGURATION STATE ==================================\n");
     machine_debug_mark_end();
 }
