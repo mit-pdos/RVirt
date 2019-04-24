@@ -405,7 +405,7 @@ pub unsafe fn initialize(machine: &MachineMeta,
     }
 
     let plic_context = machine.harts.iter().find(|h| h.hartid == hartid).unwrap().plic_context;
-
+    CONTEXT.force_unlock();
     *CONTEXT.lock() = Some(Context{
         csrs: ControlRegisters{
             sstatus: 0,
