@@ -60,7 +60,8 @@
 //!    note: the Sv39 addressing mode is in use here
 //! ```text
 //!  VIRTUAL START      - VIRTUAL END          PHYS START   PHYS END     MODE   REGION
-//!  0x00000000         - 0x        80000000   0x00000000 - 0x80000000   RWX    QEMU memory sections
+//!  0x        00000000 - 0x        40000000   0x00000000 - 0x40000000   RWX    QEMU memory sections
+//!  0x        80000000 - 0x        c0000000   0x80000000 - 0xC0000000   RWX    hypervisor memory
 //!  0xffffffffc0000000 - 0xffffffffffffffff   0x80000000 - 0xC0000000   RWX    hypervisor memory
 //! ```
 //!
