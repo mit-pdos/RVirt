@@ -138,13 +138,17 @@ const TEST_PMP: bool = false;
 /// First Hart to set this to false gets to run domain 0.
 static HART_LOTTERY: AtomicBool = AtomicBool::new(true);
 
+const M_MODE_STACK_BASE: u64 = 0x80810000;
+const M_MODE_STACK_STRIDE: u64 = 0x10000;
+
 #[naked]
 #[no_mangle]
 #[link_section = ".text.entrypoint"]
 unsafe fn _start() {
-    asm!("li sp, 0x80810000
-          slli t0, a0, 16
-          add sp, sp, t0" :::: "volatile");
+    asm!("li sp, $0
+          li t1, $1
+          mul t0, a0, t1
+          add sp, sp, t0" :: "i"(M_MODE_STACK_BASE), "i"(M_MODE_STACK_STRIDE) :: "volatile");
 
     let hartid = reg!(a0);
     let device_tree_blob = reg!(a1);
