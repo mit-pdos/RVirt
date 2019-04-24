@@ -4,9 +4,10 @@ use crate::trap;
 use crate::fdt::*;
 use crate::pmap;
 use crate::trap::constants::*;
-use crate::pmap::{boot_page_table_pa, pa2va};
+use crate::pmap::{pa2va};
 use crate::pmp;
 use crate::machdebug;
+use crate::pagedebug;
 
 global_asm!(include_str!("mcode.S"));
 
@@ -31,10 +32,10 @@ pub unsafe fn pmptest_mstart(hartid: u64, device_tree_blob: u64) {
          ::: "t0"  : "volatile");
 
     // Minimal page table to boot into S mode.
-    *((boot_page_table_pa()) as *mut u64) = 0x00000000 | 0xcf;
-    *((boot_page_table_pa()+16) as *mut u64) = 0x20000000 | 0xcf;
-    *((boot_page_table_pa()+4088) as *mut u64) = 0x20000000 | 0xcf;
-    csrw!(satp, 8 << 60 | (boot_page_table_pa() >> 12));
+    *((pmap::mboot_page_table_pa()) as *mut u64) = 0x00000000 | 0xcf;
+    *((pmap::mboot_page_table_pa()+16) as *mut u64) = 0x20000000 | 0xcf;
+    *((pmap::mboot_page_table_pa()+4088) as *mut u64) = 0x20000000 | 0xcf;
+    csrw!(satp, 8 << 60 | (pmap::mboot_page_table_pa() >> 12));
 
     // Text segment
     pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
@@ -50,6 +51,7 @@ pub unsafe fn pmptest_mstart(hartid: u64, device_tree_blob: u64) {
     // csrs!(pmpcfg0, LOCKED << 32);
 
     pmp::debug_pmp();
+    pagedebug::debug_paging();
 
     asm!("mv a0, $0
           mret" :: "r"(device_tree_blob) : "a0", "a1" : "volatile");

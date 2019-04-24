@@ -61,8 +61,41 @@ impl BootPageTable {
     }
 }
 static mut BOOT_PAGE_TABLE: BootPageTable = BootPageTable([0; 512]);
+#[link_section = ".text.init"]
+pub fn mboot_page_table_pa() -> u64 {
+    unsafe { msa2pa(&mut BOOT_PAGE_TABLE as *mut _ as u64) }
+}
+
 pub fn boot_page_table_pa() -> u64 {
-    unsafe { &mut BOOT_PAGE_TABLE as *mut _ as u64 - 0xffffffff40000000 }
+    unsafe { sa2pa(&mut BOOT_PAGE_TABLE as *mut _ as u64) }
+}
+
+// conversions between machine-physical addresses and supervisor-virtual address
+#[link_section = ".text.init"]
+pub fn mpa2sa(pa: u64) -> u64 {
+    if pa < 0x80000000 && pa >= 0xc0000000 {
+        machine_debug_abort("pa2sa given invalid address");
+    }
+    pa + 0xffffffff40000000
+}
+#[link_section = ".text.init"]
+pub fn msa2pa(sa: u64) -> u64 {
+    if sa < 0xffffffffc0000000 {
+        machine_debug_abort("sa2pa given invalid address");
+    }
+    sa - 0xffffffff40000000
+}
+pub fn pa2sa(pa: u64) -> u64 {
+    if pa < 0x80000000 && pa >= 0xc0000000 {
+        panic!("pa2sa given invalid address");
+    }
+    pa + 0xffffffff40000000
+}
+pub fn sa2pa(sa: u64) -> u64 {
+    if sa < 0xffffffffc0000000 {
+        panic!("pa2sa given invalid address");
+    }
+    sa - 0xffffffff40000000
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -73,6 +106,7 @@ pub enum PageTableRoot {
     MPA,
 }
 use PageTableRoot::*;
+use crate::machdebug::machine_debug_abort;
 
 const NULL_PAGE_PTR: u64 = 2;
 
