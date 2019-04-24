@@ -169,23 +169,10 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     *((boot_page_table_pa()+4088) as *mut u64) = 0x20000000 | 0xcf;
     csrw!(satp, 8 << 60 | (boot_page_table_pa() >> 12));
 
-    // Physical Memory Protection
-    fn pmpaddr(addr: u64, size: u64) -> u64 {
-        assert!(size.is_power_of_two());
-        assert!(size >= 16);
-        (addr + (size/16 - 1))
-    }
-
-    const LXR: u64 = 0x9d; // Lock + Execute + Read
-    const LRW: u64 = 0x9b; // Lock + Read + Write
-
     // Text segment
-    csrw!(pmpaddr0, pmpaddr(0x80000000, 2<<20));
-    csrs!(pmpcfg0, LXR);
-
+    pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 2<<20);
     // Shared data segment
-    csrw!(pmpaddr1, pmpaddr(0x80200000, 2<<20));
-    csrs!(pmpcfg0, LRW << 8);
+    pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 2<<20);
 
     // // M-mode stack
     // csrw!(pmpaddr2, pmpaddr(0x80180000, 1<<19));
