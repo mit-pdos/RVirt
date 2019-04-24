@@ -140,16 +140,15 @@ static HART_LOTTERY: AtomicBool = AtomicBool::new(true);
 #[naked]
 #[no_mangle]
 #[link_section = ".text.entrypoint"]
-unsafe fn _start() {
-    asm!("li t0 0x80000000
-          csrw mtvec, t0
-          csrw stvec, zero
-          li sp, 0x80810000
+unsafe fn _start(hartid: u64, device_tree_blob: u64) {
+    asm!("li sp, 0x80810000
           slli t0, a0, 16
           add sp, sp, t0" :::: "volatile");
 
-    let hartid = reg!(a0);
-    let device_tree_blob = reg!(a1);
+    // Simple trick to loop forever if this hart does not support supervisor mode.
+    csrw!(mtvec, 0x80000000);
+    csrw!(stvec, 0);
+
     if TEST_PMP {
         pmptest_mstart(hartid, device_tree_blob);
     } else {
@@ -160,11 +159,11 @@ unsafe fn _start() {
 #[link_section = ".text.init"]
 #[inline(never)]
 unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
-    use crate::machdebug::*;
     // Initialize some control registers
-    // csrw!(medeleg, 0xb1ff);
-    // csrw!(mideleg, 0x0222);
-    csrw!(mie, 0/*0x888*/);
+    csrs!(mideleg, 0x0222);
+    csrs!(medeleg, 0xb1ff);
+    csrw!(mie, 0x088);
+    csrc!(mip, 0xfff);
     csrw!(sie, 0);
     csrc!(mstatus, STATUS_MPP_M);
     csrs!(mstatus, STATUS_MPP_S);
@@ -172,43 +171,28 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mcounteren, 0xffffffff);
     csrw!(mscratch, 0x80810000 + 0x10000 * hartid);
 
-    // machine_debug_puts("A\r\n");
+    // // Text segment
+    // pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
+    // // Shared data segment
+    // pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 0x200000);
 
-    csrw!(medeleg, 0);
-    csrw!(mideleg, 0);
-
-    asm!("LOAD_ADDRESS t0, mtrap_entry
-          csrw 0x305, t0 // mtvec"
-         ::: "t0"  : "volatile");
-
-    csrw!(pmpaddr0, 0xffffffff_ffffffff);
-    csrw!(pmpcfg0, 0x1f);
-    // machine_debug_puts("A\r\n");
-
-    // Minimal page table to boot into S mode.
-    *((boot_page_table_pa()) as *mut u64) = 0x00000000 | 0xcf;
-    *((boot_page_table_pa()+8) as *mut u64) = 0x10000000 | 0xcf;
-    *((boot_page_table_pa()+16) as *mut u64) = 0x20000000 | 0xcf;
-    *((boot_page_table_pa()+24) as *mut u64) = 0x30000000 | 0xcf;
-    *((boot_page_table_pa()+4088) as *mut u64) = 0x20000000 | 0xcf;
-    csrw!(satp, 8 << 60 | (boot_page_table_pa() >> 12));
-
-    // Text segment
-    pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
-    // Shared data segment
-    pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 0x200000);
-    // Everything else unrestricted
-    pmp::install_pmp_napot(2, pmp::READ | pmp::WRITE | pmp::EXEC, 0, 16 << 30);
-
-    // // M-mode stack
-    // csrw!(pmpaddr2, pmpaddr(0x80180000, 1<<19));
-    // csrs!(pmpcfg0, M_ONLY << 16);
-    // csrw!(pmpaddr3, pmpaddr(0x80200000 - (hartid+1) * 64*1024, 32*1024));
-    // csrs!(pmpcfg0, LRW << 24);
-    // csrw!(pmpaddr2, pmpaddr(0x80180000, 1<<19));
-    // csrs!(pmpcfg0, LOCKED << 32);
+    csrw!(pmpaddr2, 0xffffffff_ffffffff);
+    csrs!(pmpcfg0, 0x1f << 16);
 
     if mstatic(&HART_LOTTERY).swap(false,  Ordering::SeqCst) {
+        crate::machdebug::machine_debug_puts("Won hart lottery\r\n");
+        asm!("LOAD_ADDRESS t0, mtrap_entry
+              csrw 0x305, t0 // mtvec"
+             ::: "t0"  : "volatile");
+
+        // Minimal page table to boot into S mode.
+        *((boot_page_table_pa()) as *mut u64) = 0x00000000 | 0xcf;
+        *((boot_page_table_pa()+8) as *mut u64) = 0x10000000 | 0xcf;
+        *((boot_page_table_pa()+16) as *mut u64) = 0x20000000 | 0xcf;
+        *((boot_page_table_pa()+24) as *mut u64) = 0x30000000 | 0xcf;
+        *((boot_page_table_pa()+4088) as *mut u64) = 0x20000000 | 0xcf;
+        csrw!(satp, 8 << 60 | (boot_page_table_pa() >> 12));
+
         asm!("mv a0, $1
               mv a1, $0
               mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1" : "volatile");
@@ -225,28 +209,22 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     asm!("li t0, 0xffffffff40000000
           add sp, sp, t0" ::: "t0" : "volatile");
     csrw!(stvec, (||{
-        println!("scause={:x}", csrr!(scause));
+        println!("scause={}", csrr!(scause));
+        println!("stval={:x}", csrr!(stval));
         println!("sepc={:x}", csrr!(sepc));
         panic!("Trap on dom0 hart?!")
     }) as fn() as *const () as u64);
 
     let fdt = Fdt::new(device_tree_blob);
-    println!("B");
     assert!(fdt.magic_valid());
-    println!("C");
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
-    println!("D");
     assert!(fdt.total_size() < 64 * 1024);
-    println!("E");
     let machine = fdt.parse();
-    fdt.print();
 
     // Initialize UART
     if let Some(ty) = machine.uart_type {
         print::UART_WRITER.lock().init(machine.uart_address, ty);
     }
-
-    println!("B: Hello world!");
 
     // Do some sanity checks now that the UART is initialized and we have a better chance of
     // successfully printing output.
@@ -258,15 +236,12 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
 
     // Initialize memory subsystem.
     pmap::monitor_init();
-    println!("A");
     let fdt = Fdt::new(pa2va(device_tree_blob));
-    println!("B");
 
     // Program PLIC priorities
     for i in 1..127 {
         *(pa2va(machine.plic_address + i*4) as *mut u32) = 1;
     }
-    println!("C");
 
     let mut guestid = 1;
     for &Hart { hartid, plic_context } in machine.harts.iter().filter(|h| h.hartid != hartid) {
@@ -294,7 +269,9 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
                         (machine.initrd_end - machine.initrd_start) as usize);
 
         // Send IPI
-        *REASON_ARRAY[hartid as usize].lock() = Some(Reason::EnterSupervisor {
+        let reason = &REASON_ARRAY[hartid as usize];
+        reason.force_unlock();
+        *reason.lock() = Some(Reason::EnterSupervisor {
             a0: hartid,
             a1: hart_base_pa + 4096,
             a2: hart_base_pa,
@@ -326,10 +303,12 @@ unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, hart_base_pa: u64, gues
     let (shadow_page_tables, guest_memory, guest_shift) = pmap::init(hart_base_pa, &machine);
 
     // Load guest binary
+    println!("About to load guest binary...");
     let (entry, max_addr) = sum::access_user_memory(||{
         elf::load_elf(pa2va(hart_base_pa + pmap::HEAP_OFFSET) as *const u8,
                       machine.physical_memory_offset as *mut u8)
     });
+    println!("Done");
     let guest_dtb = (max_addr | 0x1fffff) + 1;
     csrw!(sepc, entry);
 
