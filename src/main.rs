@@ -174,31 +174,35 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mcounteren, 0xffffffff);
     csrw!(mscratch, M_MODE_STACK_BASE + M_MODE_STACK_STRIDE * hartid);
 
-    // Commented out until we have a workaround for bugs with the HiFive Unleashed PMP implementation.
-    // See https://github.com/riscv/riscv-isa-manual/issues/347 for more details on the issue.
-    //
-    // // Text segment
-    // pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
-    // // Shared data segment
-    // pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 0x200000);
-
-    csrw!(pmpaddr2, 0xffffffff_ffffffff);
-    csrs!(pmpcfg0, 0x1f << 16);
+    csrw!(pmpaddr7, 0xffffffff_ffffffff);
+    csrs!(pmpcfg0, 0x1f << 56);
 
     if mstatic(&HART_LOTTERY).swap(false,  Ordering::SeqCst) {
-        // pmp::debug_pmp();
-        // pagedebug::debug_paging();
-
         asm!("LOAD_ADDRESS t0, mtrap_entry
               csrw 0x305, t0 // mtvec"
              ::: "t0"  : "volatile");
 
-        // Minimal page table to boot into S mode.
+        // Text segment
+        pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
+        // Shared data segment
+        pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 0x200000);
+
+        // Minimal page table to boot into S mode. See [1] for FU540 errata related to mixing huge
+        // pages and PMP.
+        //
+        // [1] https://github.com/riscv/riscv-isa-manual/issues/347
         *((pmap::mboot_page_table_pa()) as *mut u64) = 0x00000000 | 0xcf;
-        *((pmap::mboot_page_table_pa()+16) as *mut u64) = 0x20000000 | 0xcf;
+        *((pmap::mboot_page_table_pa()+16) as *mut u64) = ((pmap::mboot_page_table_pa() + 4096) >> 2) | 0x01;
         *((pmap::mboot_page_table_pa()+24) as *mut u64) = 0x30000000 | 0xcf;
-        *((pmap::mboot_page_table_pa()+4088) as *mut u64) = 0x20000000 | 0xcf;
+        *((pmap::mboot_page_table_pa()+4088) as *mut u64) = ((pmap::mboot_page_table_pa() + 4096) >> 2) | 0x01;
+        *((pmap::mboot_page_table_pa()+4096) as *mut u64) = 0x20000000 | 0xcb;
+        for i in 1..512 {
+            *((pmap::mboot_page_table_pa() + 4096 + i*8) as *mut u64) = (0x20000000 + (i<<19)) | 0xc7;
+        }
         csrw!(satp, 8 << 60 | (pmap::mboot_page_table_pa() >> 12));
+
+        // pmp::debug_pmp();
+        // pagedebug::debug_paging();
 
         // TODO: figure out why we have to do this dance instead of just assigning things directly
         // i.e. why is it that rust will assign a0/a1? how do we stop that? In the mean time, use

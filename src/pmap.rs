@@ -50,6 +50,7 @@ mod page_table_constants {
 pub use page_table_constants::*;
 
 #[repr(C, align(4096))]
+#[derive(Copy, Clone)]
 pub struct BootPageTable([u64; 512]);
 impl BootPageTable {
     pub fn init(&mut self) {
@@ -60,14 +61,14 @@ impl BootPageTable {
         self.0[511] = 0x20000000 | 0xcf;
     }
 }
-static mut BOOT_PAGE_TABLE: BootPageTable = BootPageTable([0; 512]);
+static mut BOOT_PAGE_TABLE: [BootPageTable; 2] = [BootPageTable([0; 512]); 2];
 #[link_section = ".text.init"]
 pub fn mboot_page_table_pa() -> u64 {
-    unsafe { msa2pa(&mut BOOT_PAGE_TABLE as *mut _ as u64) }
+    unsafe { msa2pa(&mut BOOT_PAGE_TABLE[0] as *mut _ as u64) }
 }
 
 pub fn boot_page_table_pa() -> u64 {
-    unsafe { sa2pa(&mut BOOT_PAGE_TABLE as *mut _ as u64) }
+    unsafe { sa2pa(&mut BOOT_PAGE_TABLE[0] as *mut _ as u64) }
 }
 
 // conversions between machine-physical addresses and supervisor-virtual address
