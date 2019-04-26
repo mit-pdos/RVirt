@@ -144,7 +144,9 @@ const PMP_A_TOR: u8 = 0x1;
 const PMP_A_NA4: u8 = 0x2;
 const PMP_A_NAPOT: u8 = 0x3;
 // for encoding
+#[allow(unused)]
 pub const MODE_OFF: u8 = PMP_A_OFF << PMP_A_SHIFT;
+#[allow(unused)]
 pub const MODE_TOR: u8 = PMP_A_TOR << PMP_A_SHIFT;
 pub const MODE_NA4: u8 = PMP_A_NA4 << PMP_A_SHIFT;
 pub const MODE_NAPOT: u8 = PMP_A_NAPOT << PMP_A_SHIFT;

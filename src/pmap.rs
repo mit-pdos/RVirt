@@ -74,6 +74,7 @@ pub fn boot_page_table_pa() -> u64 {
 
 // conversions between machine-physical addresses and supervisor-virtual address
 #[link_section = ".text.init"]
+#[allow(unused)]
 pub fn mpa2sa(pa: u64) -> u64 {
     if pa < 0x80000000 && pa >= 0xc0000000 {
         machine_debug_abort("pa2sa given invalid address");
@@ -87,6 +88,7 @@ pub fn msa2pa(sa: u64) -> u64 {
     }
     sa - SYMBOL_PA2VA_OFFSET
 }
+#[allow(unused)]
 pub fn pa2sa(pa: u64) -> u64 {
     if pa < 0x80000000 && pa >= 0xc0000000 {
         panic!("pa2sa given invalid address");

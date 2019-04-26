@@ -77,6 +77,7 @@ unsafe fn sstart(device_tree_blob: u64) {
     loop {}
 }
 
+#[allow(unused)]
 unsafe fn ustart() {
 
 }
