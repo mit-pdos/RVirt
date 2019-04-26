@@ -4,7 +4,7 @@ release: src/*.rs src/*.S Cargo.toml src/linker.ld
 	cargo rustc --release --target riscv64imac-unknown-none-elf -- -C link-arg=-Tsrc/linker.ld  -C linker=$(LD)
 
 binary: release
-	objcopy -S -O binary --change-addresses -0x80000000 target/riscv64imac-unknown-none-elf/release/rvirt target/riscv64imac-unknown-none-elf/release/rvirt.bin
+	objcopy -S -O binary --change-addresses -0x80000000 --set-section-flags .bss=alloc,load,contents target/riscv64imac-unknown-none-elf/release/rvirt target/riscv64imac-unknown-none-elf/release/rvirt.bin
 
 # Requires atftpd with target directory set to /tftpboot
 fit: binary uboot-fit-image.its
