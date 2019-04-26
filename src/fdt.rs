@@ -192,9 +192,13 @@ impl Fdt {
                         meta.physical_memory_size = (*region).size();
                     }
                     (["", "uart"], "reg") |
-                    (["", "soc", "uart"], "reg") => meta.uart_address = prop.read_range().0,
+                    (["", "soc", "uart"], "reg") |
+                    (["", "soc", "serial"], "reg") => if meta.uart_address == 0 {
+                        meta.uart_address = prop.read_range().0
+                    }
                     (["", "uart"], "compatible") |
-                    (["", "soc", "uart"], "compatible") => {
+                    (["", "soc", "uart"], "compatible") |
+                    (["", "soc", "serial"], "compatible") => if meta.uart_type.is_none() {
                         match prop.value_str().map(|s| s.trim_end_matches('\0')) {
                             Some("ns16550a") => meta.uart_type = Some(UartType::Ns16550a),
                             Some("sifive,uart0") => meta.uart_type = Some(UartType::SiFive),

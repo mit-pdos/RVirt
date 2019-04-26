@@ -406,6 +406,10 @@ pub unsafe fn initialize(machine: &MachineMeta,
 
     let plic_context = machine.harts.iter().find(|h| h.hartid == hartid).unwrap().plic_context;
 
+    // Memory backing for CONTEXT might not be in a valid state, so force_unlock() first. This is
+    // safe because no other hart will be trying to access this memory right now.
+    CONTEXT.force_unlock();
+
     *CONTEXT.lock() = Some(Context{
         csrs: ControlRegisters{
             sstatus: 0,

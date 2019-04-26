@@ -1,7 +1,15 @@
 LD=riscv64-unknown-elf-ld
 
-release: src/*.rs Cargo.toml src/linker.ld
+release: src/*.rs src/*.S Cargo.toml src/linker.ld
 	cargo rustc --release --target riscv64imac-unknown-none-elf -- -C link-arg=-Tsrc/linker.ld  -C linker=$(LD)
+
+binary: release
+	objcopy -S -O binary --change-addresses -0x80000000 --set-section-flags .bss=alloc,load,contents target/riscv64imac-unknown-none-elf/release/rvirt target/riscv64imac-unknown-none-elf/release/rvirt.bin
+
+# Requires atftpd with target directory set to /tftpboot
+fit: binary uboot-fit-image.its
+	mkimage -f uboot-fit-image.its -A riscv -O linux -T flat_dt target/riscv64imac-unknown-none-elf/release/rvirt.fit
+	cp target/riscv64imac-unknown-none-elf/release/rvirt.fit /srv/tftp/hifiveu.fit
 
 # note: this maps rng -> virtio2, blk -> virtio1, net -> virtio0. see virtio-order.md for explanation.
 qemu: release
@@ -28,3 +36,8 @@ GDBOPTS=$(if $(DEBUG),-gdb tcp::26000 -S,)
 # to debug, run make qemu-gdb, and then run gdb
 qemu-gdb: DEBUG=1
 qemu-gdb: qemu
+
+# To get line endings to be correct, follow steps described on:
+# https://unix.stackexchange.com/questions/283924/how-can-minicom-permanently-translate-incoming-newline-n-to-crlf
+serial-output:
+	sudo minicom -D /dev/serial/by-id/usb-FTDI_Dual_RS232-HS-if01-port0
