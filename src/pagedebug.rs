@@ -1,6 +1,6 @@
 
 use crate::machdebug::*;
-use crate::pagedebug::PageWalkError::{ErrTooDeep, ErrMisalignedSuperpage, ErrUnmapped};
+use crate::pagedebug::PageWalkError::{ErrUnmapped};
 use crate::trap::constants::STATUS_SUM;
 
 pub const MODE_NONE: u8 = 0;
@@ -87,7 +87,7 @@ unsafe fn walk_page_table_iter<Data>(a: u64, i: u8, vabase: u64, cb: PageWalkerC
         let rsw = ((pte >> 8) & 0x3) as u8;
         let pagelen = PAGE_SIZE << (PPN_BITS_EACH * i);
 
-        let mut err;
+        let err;
 
         if (flags & (FLAG_VALID | FLAG_READ | FLAG_WRITE | FLAG_EXEC)) == FLAG_VALID {
             if i == 0 {
@@ -127,7 +127,7 @@ fn flag(flags: u8, f: &str, flag: u8) {
     } else {
         spaces += f.len();
     }
-    for i in 0..spaces {
+    for _ in 0..spaces {
         machine_debug_puts(" ");
     }
 }

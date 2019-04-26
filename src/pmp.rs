@@ -3,7 +3,7 @@ use crate::machdebug::*;
 
 #[link_section = ".text.init"]
 pub unsafe fn write_pmp_config(entry: u8, config: u8) {
-    machine_debug_assert(0 <= entry && entry <= 15, "entry out of range");
+    machine_debug_assert(entry <= 15, "entry out of range");
     let shift = (entry & 7) * 8;
     if entry < 8 {
         csrc!(pmpcfg0, (0xFF as u64) << shift);
@@ -16,7 +16,7 @@ pub unsafe fn write_pmp_config(entry: u8, config: u8) {
 
 #[link_section = ".text.init"]
 pub fn read_pmp_config(entry: u8) -> u8 {
-    machine_debug_assert(0 <= entry && entry <= 15, "entry out of range");
+    machine_debug_assert(entry <= 15, "entry out of range");
     let shift = (entry & 7) * 8;
     let reg = if entry < 8 {
         csrr!(pmpcfg0)
@@ -121,7 +121,7 @@ fn extract_napot_bits(address: u64) -> (u8, u64) {
 // if this is the first entry, set lastconfig = lastaddressreg = 0
 // return value is [low, high) -- so low is inclusive and high is exclusive
 #[link_section = ".text.init"]
-pub fn decode_pmp_range(config: u8, address: u64, lastconfig: u8, lastaddress: u64) -> (u64, u64) {
+pub fn decode_pmp_range(config: u8, address: u64, _lastconfig: u8, lastaddress: u64) -> (u64, u64) {
     match (config >> PMP_A_SHIFT) & 3 {
         PMP_A_OFF => (0, 0),
         PMP_A_TOR => (lastaddress << 2, address << 2),

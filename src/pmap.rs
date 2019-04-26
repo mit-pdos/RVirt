@@ -1,5 +1,6 @@
 use crate::fdt::MachineMeta;
 use crate::context::Context;
+use crate::constants::SYMBOL_PA2VA_OFFSET;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
 use crate::riscv;
 use core::ptr;
@@ -77,26 +78,26 @@ pub fn mpa2sa(pa: u64) -> u64 {
     if pa < 0x80000000 && pa >= 0xc0000000 {
         machine_debug_abort("pa2sa given invalid address");
     }
-    pa + 0xffffffff40000000
+    pa + SYMBOL_PA2VA_OFFSET
 }
 #[link_section = ".text.init"]
 pub fn msa2pa(sa: u64) -> u64 {
     if sa < 0xffffffffc0000000 {
         machine_debug_abort("sa2pa given invalid address");
     }
-    sa - 0xffffffff40000000
+    sa - SYMBOL_PA2VA_OFFSET
 }
 pub fn pa2sa(pa: u64) -> u64 {
     if pa < 0x80000000 && pa >= 0xc0000000 {
         panic!("pa2sa given invalid address");
     }
-    pa + 0xffffffff40000000
+    pa + SYMBOL_PA2VA_OFFSET
 }
 pub fn sa2pa(sa: u64) -> u64 {
     if sa < 0xffffffffc0000000 {
         panic!("pa2sa given invalid address");
     }
-    sa - 0xffffffff40000000
+    sa - SYMBOL_PA2VA_OFFSET
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

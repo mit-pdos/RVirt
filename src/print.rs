@@ -1,5 +1,6 @@
 use core::{fmt, ptr};
 use spin::{Mutex, MutexGuard};
+use crate::constants::mstatic;
 use crate::fdt::UartType;
 use crate::pmap;
 
@@ -174,7 +175,5 @@ pub fn guest_println(guestid: u64, line: &[u8]) {
 
 #[link_section = ".text.init"]
 pub fn mwriter<'a>() -> Option<MutexGuard<'a, UartWriter>> {
-    let writer_ptr = &UART_WRITER as *const _ as u64;
-    let writer_ptr = writer_ptr - 0xffffffff40000000;
-    unsafe { (*(writer_ptr as *const Mutex<UartWriter>)).try_lock() }
+    mstatic(&UART_WRITER).try_lock()
 }

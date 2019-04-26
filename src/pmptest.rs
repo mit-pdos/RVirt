@@ -1,13 +1,11 @@
 
-use crate::print;
-use crate::trap;
+use crate::constants::SYMBOL_PA2VA_OFFSET;
 use crate::fdt::*;
-use crate::pmap;
-use crate::trap::constants::*;
-use crate::pmap::{pa2va};
-use crate::pmp;
-use crate::machdebug;
 use crate::pagedebug;
+use crate::pmap;
+use crate::pmp;
+use crate::print;
+use crate::trap::constants::*;
 
 global_asm!(include_str!("mcode.S"));
 
@@ -58,8 +56,8 @@ pub unsafe fn pmptest_mstart(hartid: u64, device_tree_blob: u64) {
 }
 
 unsafe fn sstart(device_tree_blob: u64) {
-    asm!("li t0, 0xffffffff40000000
-          add sp, sp, t0" ::: "t0" : "volatile");
+    asm!("li t0, $0
+          add sp, sp, t0" :: "i"(SYMBOL_PA2VA_OFFSET)  : "t0" : "volatile");
     csrw!(stvec, (||{panic!("Trap on hart 0?!")}) as fn() as *const () as u64);
 
     // Read and process host FDT.

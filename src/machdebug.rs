@@ -1,4 +1,5 @@
 
+use crate::constants::SYMBOL_PA2VA_OFFSET;
 use crate::print;
 
 // never returns but we can't convince rust of that, because unreachable_unchecked requires abort
@@ -27,9 +28,9 @@ pub fn machine_debug_assert(cond: bool, msg: &str) {
 #[no_mangle]
 pub fn machine_debug_puts(s: &str) {
     let mut sreal = s;
-    if s.as_ptr() as u64 >= 0xffffffff40000000 {
+    if s.as_ptr() as u64 >= SYMBOL_PA2VA_OFFSET {
         unsafe {
-            sreal = core::str::from_utf8_unchecked(core::slice::from_raw_parts(((s.as_ptr() as u64) - 0xffffffff40000000) as *const u8, s.len()));
+            sreal = core::str::from_utf8_unchecked(core::slice::from_raw_parts(((s.as_ptr() as u64) - SYMBOL_PA2VA_OFFSET) as *const u8, s.len()));
         }
     }
     if let Some(mut writer) = print::mwriter() {

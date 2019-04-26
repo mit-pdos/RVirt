@@ -1,5 +1,5 @@
 
-use crate::constants::{mstatic, MAX_HOST_HARTS, SYMBOL_PA2VA_OFFSET};
+use crate::constants::{mstatic, MAX_HOST_HARTS};
 use crate::machdebug;
 use spin::Mutex;
 

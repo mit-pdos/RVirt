@@ -1,13 +1,17 @@
 
-const MAX_HARTS: usize = 8;
+use crate::constants::MAX_GUEST_HARTS;
+
+/// Number of contexts for the PLIC. Value is twice the max number of harts because each hart will
+/// have one M-mode context and one S-mode context.
+const MAX_CONTEXTS: usize = MAX_GUEST_HARTS * 2;
 
 pub struct PlicState {
     base: u64,
     source_priority: [u32; 512],
     pending: [u32; 16],
-    enable: [[u32; 32]; MAX_HARTS],
-    thresholds: [u32; MAX_HARTS],
-    claim_complete: [u32; MAX_HARTS],
+    enable: [[u32; 32]; MAX_CONTEXTS],
+    thresholds: [u32; MAX_CONTEXTS],
+    claim_complete: [u32; MAX_CONTEXTS],
 }
 
 impl PlicState {
@@ -16,9 +20,9 @@ impl PlicState {
             base: 0x0c000000,
             source_priority: [0; 512],
             pending: [0; 16],
-            enable: [[0; 32]; MAX_HARTS],
-            thresholds: [0; MAX_HARTS],
-            claim_complete: [0; MAX_HARTS],
+            enable: [[0; 32]; MAX_CONTEXTS],
+            thresholds: [0; MAX_CONTEXTS],
+            claim_complete: [0; MAX_CONTEXTS],
         }
     }
 
@@ -28,7 +32,7 @@ impl PlicState {
             self.source_priority[offset as usize >> 2]
         } else if offset >= 0x1000 && offset <= 0x1014 {
             self.pending[offset as usize >> 2]
-        } else if offset >= 0x2000 && offset < 0x2000 + 0x80 * MAX_HARTS as u64 {
+        } else if offset >= 0x2000 && offset < 0x2000 + 0x80 * MAX_CONTEXTS as u64 {
             let hart = (offset - 0x2000) / 0x80;
             let index = ((offset - 0x2000) & 0x7f) >> 2;
             if index <= 32 {
@@ -36,7 +40,7 @@ impl PlicState {
             } else {
                 0
             }
-        } else if offset >= 0x200000 && offset < 0x200000 + 0x1000 * MAX_HARTS as u64 {
+        } else if offset >= 0x200000 && offset < 0x200000 + 0x1000 * MAX_CONTEXTS as u64 {
             let hart = ((offset - 0x200000) / 0x1000) as usize;
             let index = ((offset - 0x200000) & 0xfff) >> 2;
             if index == 0 {
@@ -77,14 +81,14 @@ impl PlicState {
             self.source_priority[offset as usize >> 2] = value;
         } else if offset >= 0x1000 && offset <= 0x1014 {
             self.pending[offset as usize >> 2] = value;
-        } else if offset >= 0x2000 && offset < 0x2000 + 0x80 * MAX_HARTS as u64 {
+        } else if offset >= 0x2000 && offset < 0x2000 + 0x80 * MAX_CONTEXTS as u64 {
             let hart = (offset - 0x2000) / 0x80;
             let index = ((offset - 0x2000) & 0x7f) >> 2;
 
             if index <= 32 {
                 self.enable[hart as usize][index as usize] = value;
             }
-        } else if offset >= 0x200000 && offset < 0x200000 + 0x1000 * MAX_HARTS as u64 {
+        } else if offset >= 0x200000 && offset < 0x200000 + 0x1000 * MAX_CONTEXTS as u64 {
             let hart = (offset - 0x200000) / 0x1000;
             let index = ((offset - 0x200000) & 0xfff) >> 2;
             if index == 0 {
@@ -111,9 +115,9 @@ impl PlicState {
     }
 
     pub fn interrupt_pending(&self) -> bool {
-        const HART: usize = 1; // TODO: shouldn't be a constant
+        const CONTEXT: usize = 1; // TODO: shouldn't be a constant
 
-        let threshold = self.thresholds[HART];
+        let threshold = self.thresholds[CONTEXT];
         for i in 0..self.pending.len() {
             if self.pending[i] == 0 {
                 continue;

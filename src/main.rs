@@ -118,7 +118,7 @@ mod trap;
 mod virtio;
 
 use core::sync::atomic::{AtomicBool, Ordering};
-use constants::mstatic;
+use constants::{mstatic, SYMBOL_PA2VA_OFFSET};
 use fdt::*;
 use ipi::{REASON_ARRAY, Reason};
 use trap::constants::*;
@@ -223,8 +223,8 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
 }
 
 unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
-    asm!("li t0, 0xffffffff40000000
-          add sp, sp, t0" ::: "t0" : "volatile");
+    asm!("li t0, $0
+          add sp, sp, t0" :: "i"(SYMBOL_PA2VA_OFFSET) : "t0" : "volatile");
     csrw!(stvec, (||{
         println!("scause={:x}", csrr!(scause));
         println!("sepc={:x}", csrr!(sepc));
