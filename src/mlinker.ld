@@ -1,0 +1,41 @@
+OUTPUT_ARCH( "riscv" )
+ENTRY( _start )
+
+SECTIONS
+{
+  . = 0x80000000;
+  .text.machine :
+  {
+    *(.text.entrypoint)
+    *(.text.init)
+	*(.text.mcode)
+    *(.text) *(.text.*)
+    *(.gnu.linkonce.t.*)
+  }
+
+  . = ALIGN(0x1000);
+  _rodata_pa = .;
+. += 0xffffffff40000000;
+  .rodata.machine : AT(_rodata_pa)
+  {
+    *(.rdata) *(.rodata) *(.rodata.*)
+    *(.gnu.linkonce.r.*)
+    *(.srodata*)
+    *(.comment)
+  }
+
+  /DISCARD/ :
+  {
+    *(.shared.data)
+
+    *(.data)
+    *(.data.*)
+    *(.gnu.linkonce.d.*)
+
+	*(.bss)
+    *(.bss.*)
+    *(.sbss*)
+    *(.gnu.linkonce.b.*)
+    *(COMMON)
+  }
+}

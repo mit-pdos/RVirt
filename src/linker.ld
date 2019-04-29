@@ -4,26 +4,26 @@ ENTRY( _start )
 SECTIONS
 {
   . = 0x80000000;
-  .text.init :
+  .text.machine :
   {
-    *(.text.entrypoint)
-    *(.text.init)
-	*(.text.mcode)
+    *(.text.machine)
+  }
+  . = ALIGN(0x1000);
+  .rodata.machine :
+  {
+	*(.rodata.machine)
+  }
+
+  . = 0xffffffffc0100000;
+  .text : AT(0x80100000)
+  {
+    *(.text.supervisor)
   }
 
   . = ALIGN(0x1000);
-  _text_pa = .;
-  . += 0xffffffff40000000;
-  .text : AT(_text_pa)
-  {
-    *(.text) *(.text.*)
-    *(.gnu.linkonce.t.*)
-  }
-
   .rodata :
   {
-    *(.rdata) *(.rodata) *(.rodata.*)
-    *(.gnu.linkonce.r.*)
+	*(.rodata.supervisor)
   }
 
   . = 0xffffffffc0200000;
@@ -35,19 +35,11 @@ SECTIONS
   .data :
   {
     *(.data)
-    *(.data.*)
-    *(.srodata*)
-    *(.gnu.linkonce.d.*)
-    *(.comment)
   }
 
   .bss :
   {
     *(.bss)
-    *(.bss.*)
-    *(.sbss*)
-    *(.gnu.linkonce.b.*)
-    *(COMMON)
   }
 
   ASSERT(. < 0xffffffffc0600000, "")

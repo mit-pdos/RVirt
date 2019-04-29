@@ -2,7 +2,7 @@ use crate::fdt::MachineMeta;
 use crate::context::Context;
 use crate::constants::SYMBOL_PA2VA_OFFSET;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
-use crate::riscv;
+use crate::{riscv, statics};
 use core::ptr;
 use riscv_decode::Instruction;
 
@@ -62,29 +62,20 @@ impl BootPageTable {
         self.0[511] = 0x20000000 | 0xcf;
     }
 }
-static mut BOOT_PAGE_TABLE: [BootPageTable; 2] = [BootPageTable([0; 512]); 2];
-#[link_section = ".text.init"]
-pub fn mboot_page_table_pa() -> u64 {
-    unsafe { msa2pa(&mut BOOT_PAGE_TABLE[0] as *mut _ as u64) }
-}
-
-pub fn boot_page_table_pa() -> u64 {
-    unsafe { sa2pa(&mut BOOT_PAGE_TABLE[0] as *mut _ as u64) }
-}
 
 // conversions between machine-physical addresses and supervisor-virtual address
 #[link_section = ".text.init"]
 #[allow(unused)]
 pub fn mpa2sa(pa: u64) -> u64 {
     if pa < 0x80000000 && pa >= 0xc0000000 {
-        machine_debug_abort("pa2sa given invalid address");
+        // machdebug::machine_debug_abort("pa2sa given invalid address");
     }
     pa + SYMBOL_PA2VA_OFFSET
 }
 #[link_section = ".text.init"]
 pub fn msa2pa(sa: u64) -> u64 {
     if sa < 0xffffffffc0000000 {
-        machine_debug_abort("sa2pa given invalid address");
+	    // machdebug::machine_debug_abort("sa2pa given invalid address");
     }
     sa - SYMBOL_PA2VA_OFFSET
 }
@@ -110,7 +101,6 @@ pub enum PageTableRoot {
     MPA,
 }
 use PageTableRoot::*;
-use crate::machdebug::machine_debug_abort;
 
 const NULL_PAGE_PTR: u64 = 2;
 
@@ -296,15 +286,17 @@ pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64
     None
 }
 
-pub unsafe fn monitor_init() {
+pub unsafe fn monitor_init(shared: &statics::Shared) {
+    let boot_page_table_pa = shared.boot_page_table.as_ptr() as u64;
+
     // Setup direct map region in boot page table
     for i in 0..DIRECT_MAP_PAGES {
-        *((boot_page_table_pa() + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
+        *((boot_page_table_pa + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
     }
-    crate::print::UART_WRITER.lock().switch_to_virtual_addresses();
+    crate::SHARED_STATICS.uart_writer.lock().switch_to_virtual_addresses();
 
-    *((boot_page_table_pa()) as *mut u64) = 0;
-    *((boot_page_table_pa()+16) as *mut u64) = 0;
+    *((boot_page_table_pa) as *mut u64) = 0;
+    *((boot_page_table_pa+16) as *mut u64) = 0;
 
     riscv::sfence_vma();
 }

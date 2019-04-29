@@ -1,9 +1,10 @@
 use arrayvec::ArrayVec;
 use spin::Mutex;
 use crate::fdt::MachineMeta;
+use crate::memory_region::MemoryRegion;
 use crate::plic::PlicState;
 use crate::pmap::{PageTables, PageTableRoot};
-use crate::memory_region::MemoryRegion;
+use crate::statics::SHARED_STATICS;
 use crate::trap::constants::*;
 use crate::trap::U64Bits;
 use crate::{csr, pmap, print, riscv, virtio};
@@ -114,7 +115,7 @@ impl Uart {
 
     pub fn fill_fifo(&mut self) {
         while self.input_bytes_ready < self.input_fifo.len() {
-            if let Some(ch) = print::UART_WRITER.lock().getchar() {
+            if let Some(ch) = SHARED_STATICS.uart_writer.lock().getchar() {
                 self.input_fifo[self.input_bytes_ready] = ch;
                 self.input_bytes_ready += 1;
             } else {

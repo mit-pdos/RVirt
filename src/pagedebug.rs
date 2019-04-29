@@ -1,4 +1,5 @@
 
+use rvirt::*;
 use crate::machdebug::*;
 use crate::pagedebug::PageWalkError::{ErrUnmapped};
 use crate::trap::constants::STATUS_SUM;

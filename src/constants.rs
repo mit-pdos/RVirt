@@ -9,11 +9,5 @@ pub const MAX_HOST_HARTS: usize = 16;
 
 pub const MAX_GUEST_HARTS: usize = 8;
 
-/// Return a reference to a static variable that can be accessed from M-mode.
-#[link_section = ".text.init"]
-pub fn mstatic<'a, T>(t: &'a T) -> &'a T {
-    let address = (t as *const T) as u64;
-    unsafe {
-        &*((address - SYMBOL_PA2VA_OFFSET) as *const T)
-    }
-}
+pub const MACHINE_SHARED_STATIC_ADDRESS: u64 = 0x80200000;
+pub const SUPERVISOR_SHARED_STATIC_ADDRESS: u64 = 0xffffffffc0200000;

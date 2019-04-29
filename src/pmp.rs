@@ -1,4 +1,5 @@
 
+use rvirt::*;
 use crate::machdebug::*;
 
 #[link_section = ".text.init"]

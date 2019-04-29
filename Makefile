@@ -1,7 +1,9 @@
 LD=riscv64-unknown-elf-ld
 
 release: src/*.rs src/*.S Cargo.toml src/linker.ld
-	cargo rustc --release --target riscv64imac-unknown-none-elf -- -C link-arg=-Tsrc/linker.ld  -C linker=$(LD)
+	cargo rustc --release --target riscv64imac-unknown-none-elf --bin rvirt-supervisor -- -C link-arg=-Tsrc/slinker.ld  -C linker=$(LD)
+	cargo rustc --release --target riscv64imac-unknown-none-elf --bin rvirt-machine --features "physical_symbol_addresses" -- -C link-arg=-Tsrc/mlinker.ld  -C linker=$(LD)
+	$(LD) -Tsrc/linker.ld target/riscv64imac-unknown-none-elf/release/rvirt-supervisor target/riscv64imac-unknown-none-elf/release/rvirt-machine -o target/riscv64imac-unknown-none-elf/release/rvirt
 
 binary: release
 	objcopy -S -O binary --change-addresses -0x80000000 --set-section-flags .bss=alloc,load,contents target/riscv64imac-unknown-none-elf/release/rvirt target/riscv64imac-unknown-none-elf/release/rvirt.bin

@@ -12,3 +12,15 @@ arrayvec = { version = "0.4.10", default-features = false }
 
 [profile.release]
 debug = true
+
+[[bin]]
+name = "rvirt-machine"
+path = "src/machine.rs"
+required-features = ["physical_symbol_addresses"]
+
+[[bin]]
+name = "rvirt-supervisor"
+path = "src/supervisor.rs"
+
+[features]
+physical_symbol_addresses = []

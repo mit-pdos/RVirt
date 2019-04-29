@@ -1,21 +1,21 @@
 use core::{fmt, ptr};
-use spin::{Mutex, MutexGuard};
-use crate::constants::mstatic;
+use spin::MutexGuard;
+use crate::statics::SHARED_STATICS;
 use crate::fdt::UartType;
 use crate::pmap;
 
 // see https://github.com/riscv/riscv-pk/blob/master/machine/uart16550.c
 // see: https://os.phil-opp.com/printing-to-screen
 
-enum UartWriterInner {
+pub enum UartWriterInner {
     Ns16550a { initialized: bool },
     SiFive,
 }
 
 pub struct UartWriter {
-    pa: u64,
-    va: Option<u64>,
-    inner: UartWriterInner,
+    pub pa: u64,
+    pub va: Option<u64>,
+    pub inner: UartWriterInner,
 }
 
 impl UartWriterInner {
@@ -130,26 +130,18 @@ impl fmt::Write for UartWriter {
 }
 unsafe impl Send for UartWriter {}
 
-/// Hard code an address for the UART. This value will be replaced once the device tree has been
-/// parsed, but until then this provides a way to debug early boot issues. Once the memory subsystem
-/// is initialized, this will again be updated to use virtual addresses instead of physical addresses.
-#[link_section = ".shared.data"]
-pub static UART_WRITER: Mutex<UartWriter> = Mutex::new(UartWriter {
-    pa: 0x10000000,
-    va: None,
-    inner: UartWriterInner::Ns16550a { initialized: false },
-});
-
+#[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => ({
         use core::fmt::Write;
-        use crate::print::UART_WRITER;
-        let mut writer = UART_WRITER.lock();
+        use crate::SHARED_STATICS;
+        let mut writer = SHARED_STATICS.uart_writer.lock();
         writer.write_str("\u{1b}[33m").unwrap();
         writer.write_fmt(format_args!($($arg)*)).unwrap();
         writer.write_str("\u{1b}[0m").unwrap();
     });
 }
+#[macro_export]
 macro_rules! println {
     ($fmt:expr) => (print!(concat!($fmt, "\n")));
     ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
@@ -157,8 +149,8 @@ macro_rules! println {
 
 pub fn guest_println(guestid: u64, line: &[u8]) {
     use core::fmt::Write;
-    use crate::print::UART_WRITER;
-    let mut writer = UART_WRITER.lock();
+    use crate::SHARED_STATICS;
+    let mut writer = SHARED_STATICS.uart_writer.lock();
     match guestid {
         1 => writer.write_str("\u{1b}[32m").unwrap(),
         2 => writer.write_str("\u{1b}[34m").unwrap(),
@@ -175,5 +167,5 @@ pub fn guest_println(guestid: u64, line: &[u8]) {
 
 #[link_section = ".text.init"]
 pub fn mwriter<'a>() -> Option<MutexGuard<'a, UartWriter>> {
-    mstatic(&UART_WRITER).try_lock()
+    SHARED_STATICS.uart_writer.try_lock()
 }
