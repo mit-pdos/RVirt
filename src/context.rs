@@ -46,7 +46,7 @@ pub struct Uart {
     pub input_bytes_ready: usize,
 
     pub line_buffer: ArrayVec<[u8; 256]>,
-    pub guestid: u64,
+    pub guestid: Option<u64>,
 }
 
 pub struct HostClint {
@@ -241,16 +241,20 @@ impl Uart {
     }
 
     pub fn output_byte(&mut self, value: u8) {
-        let len = self.line_buffer.len();
-        if len > 0 && self.line_buffer[len - 1] == '\r' as u8 && value != '\n' as u8 {
-            print::guest_println(self.guestid, &self.line_buffer);
-            self.line_buffer.clear();
-        }
-        if value == '\n' as u8 || self.line_buffer.is_full() {
-            print::guest_println(self.guestid, &self.line_buffer);
-            self.line_buffer.clear();
+        if let Some(guestid) = self.guestid {
+            let len = self.line_buffer.len();
+            if len > 0 && self.line_buffer[len - 1] == '\r' as u8 && value != '\n' as u8 {
+                print::guest_println(guestid, &self.line_buffer);
+                self.line_buffer.clear();
+            }
+            if value == '\n' as u8 || self.line_buffer.is_full() {
+                print::guest_println(guestid, &self.line_buffer);
+                self.line_buffer.clear();
+            } else {
+                self.line_buffer.push(value);
+            }
         } else {
-            self.line_buffer.push(value);
+            SHARED_STATICS.uart_writer.lock().putchar(value);
         }
     }
 }
@@ -385,11 +389,11 @@ pub unsafe fn initialize(machine: &MachineMeta,
                          guest_memory: MemoryRegion,
                          guest_shift: u64,
                          hartid: u64,
-                         guestid: u64) {
+                         guestid: Option<u64>) {
     let mut irq_map = [0; 512];
     let mut virtio_devices = ArrayVec::new();
     for i in 0..4 {
-        let index = (guestid as usize - 1) * 4 + i;
+        let index = (guestid.unwrap_or(1) as usize - 1) * 4 + i;
         if index < machine.virtio.len() {
             virtio_devices.push(virtio::Device::new(machine.virtio[index].base_address));
             let host_irq = machine.virtio[index].irq;

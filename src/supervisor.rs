@@ -62,7 +62,9 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     }
 
     let mut guestid = 1;
+    let single_guest = machine.harts.iter().filter(|h| h.hartid != hartid).count() == 1;
     for &Hart { hartid, plic_context } in machine.harts.iter().filter(|h| h.hartid != hartid) {
+
         let hart_base_pa = machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE * guestid;
 
         let mut irq_mask = 0;
@@ -91,7 +93,7 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
             a0: hartid,
             a1: hart_base_pa + 4096,
             a2: hart_base_pa,
-            a3: guestid as u64,
+            a3: if !single_guest { guestid as u64 } else { u64::max_value() },
             sp: hart_base_pa + (4<<20) + pmap::DIRECT_MAP_OFFSET,
             satp: 8 << 60 | (hart_base_pa >> 12),
             mepc: hart_entry as u64,
@@ -108,6 +110,12 @@ unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, hart_base_pa: u64, gues
     csrw!(stvec, crate::trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
     csrs!(sstatus, trap::constants::STATUS_SUM);
+
+    let guestid = if guestid == u64::max_value() {
+        None
+    } else {
+        Some(guestid)
+    };
 
     // Read and process host FDT.
     let fdt = Fdt::new(pa2va(device_tree_blob));
