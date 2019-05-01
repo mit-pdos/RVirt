@@ -2,7 +2,6 @@
 use rvirt::*;
 use crate::machdebug::*;
 
-#[link_section = ".text.init"]
 pub unsafe fn write_pmp_config(entry: u8, config: u8) {
     machine_debug_assert(entry <= 15, "entry out of range");
     let shift = (entry & 7) * 8;
@@ -15,7 +14,6 @@ pub unsafe fn write_pmp_config(entry: u8, config: u8) {
     }
 }
 
-#[link_section = ".text.init"]
 pub fn read_pmp_config(entry: u8) -> u8 {
     machine_debug_assert(entry <= 15, "entry out of range");
     let shift = (entry & 7) * 8;
@@ -27,7 +25,6 @@ pub fn read_pmp_config(entry: u8) -> u8 {
     (reg >> shift) as u8
 }
 
-#[link_section = ".text.init"]
 pub fn read_pmp_address(entry: u8) -> u64 {
     // come up with a better solution to this
     // (though apparently CSR instructions are hard-coded by CSR, so that might be hard?)
@@ -52,7 +49,6 @@ pub fn read_pmp_address(entry: u8) -> u64 {
     }
 }
 
-#[link_section = ".text.init"]
 pub unsafe fn write_pmp_address(entry: u8, address: u64) {
     // come up with a better solution to this
     // (though apparently CSR instructions are hard-coded by CSR, so that might be hard?)
@@ -78,7 +74,6 @@ pub unsafe fn write_pmp_address(entry: u8, address: u64) {
 }
 
 // note: these updates are not atomic. don't let interrupts happen during them!
-#[link_section = ".text.init"]
 pub unsafe fn install_pmp(entry: u8, config: u8, address: u64) {
     write_pmp_address(entry, address);
     machine_debug_assert(read_pmp_address(entry) == address, "could not change PMP address entry");
@@ -86,7 +81,6 @@ pub unsafe fn install_pmp(entry: u8, config: u8, address: u64) {
     machine_debug_assert(read_pmp_config(entry) == config, "could not change PMP config entry");
 }
 
-#[link_section = ".text.init"]
 pub unsafe fn install_pmp_napot(entry: u8, config: u8, address: u64, size: u64) {
     if (address & 3) != 0 {
         machine_debug_abort("addresses must be 4-byte aligned");
@@ -108,7 +102,6 @@ pub unsafe fn install_pmp_napot(entry: u8, config: u8, address: u64, size: u64) 
 }
 
 // returns (bits, remaining).
-#[link_section = ".text.init"]
 fn extract_napot_bits(address: u64) -> (u8, u64) {
     let mut bits = 0;
     let mut shifted = address;
@@ -121,7 +114,6 @@ fn extract_napot_bits(address: u64) -> (u8, u64) {
 
 // if this is the first entry, set lastconfig = lastaddressreg = 0
 // return value is [low, high) -- so low is inclusive and high is exclusive
-#[link_section = ".text.init"]
 pub fn decode_pmp_range(config: u8, address: u64, _lastconfig: u8, lastaddress: u64) -> (u64, u64) {
     match (config >> PMP_A_SHIFT) & 3 {
         PMP_A_OFF => (0, 0),
@@ -156,7 +148,6 @@ pub const RESERVED2: u8 = 0x40;
 pub const LOCK: u8 = 0x80;
 
 /** prints out as much information on the PMP state as possible in M-mode */
-#[link_section = ".text.init"]
 pub fn debug_pmp() {
     machine_debug_mark_begin();
     let hart = csrr!(mhartid);

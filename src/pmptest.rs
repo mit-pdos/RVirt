@@ -10,7 +10,6 @@ use crate::trap::constants::*;
 
 global_asm!(include_str!("mcode.S"));
 
-#[link_section = ".text.init"]
 #[inline(never)]
 pub unsafe fn pmptest_mstart(hartid: u64, device_tree_blob: u64) {
     if hartid > 0 {

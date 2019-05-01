@@ -53,7 +53,6 @@ unsafe fn _start(hartid: u64, device_tree_blob: u64) {
     }
 }
 
-#[link_section = ".text.init"]
 #[inline(never)]
 unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     // Initialize some control registers
@@ -115,7 +114,6 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     }
 }
 
-#[link_section = ".text.init"]
 #[no_mangle]
 pub unsafe fn handle_ipi() {
     let hartid = csrr!(mhartid);

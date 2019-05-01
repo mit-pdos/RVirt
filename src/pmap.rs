@@ -64,21 +64,6 @@ impl BootPageTable {
 }
 
 // conversions between machine-physical addresses and supervisor-virtual address
-#[link_section = ".text.init"]
-#[allow(unused)]
-pub fn mpa2sa(pa: u64) -> u64 {
-    if pa < 0x80000000 && pa >= 0xc0000000 {
-        // machdebug::machine_debug_abort("pa2sa given invalid address");
-    }
-    pa + SYMBOL_PA2VA_OFFSET
-}
-#[link_section = ".text.init"]
-pub fn msa2pa(sa: u64) -> u64 {
-    if sa < 0xffffffffc0000000 {
-	    // machdebug::machine_debug_abort("sa2pa given invalid address");
-    }
-    sa - SYMBOL_PA2VA_OFFSET
-}
 #[allow(unused)]
 pub fn pa2sa(pa: u64) -> u64 {
     if pa < 0x80000000 && pa >= 0xc0000000 {

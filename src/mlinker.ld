@@ -7,8 +7,6 @@ SECTIONS
   .text.machine :
   {
     *(.text.entrypoint)
-    *(.text.init)
-	*(.text.mcode)
     *(.text) *(.text.*)
     *(.gnu.linkonce.t.*)
   }

@@ -17,7 +17,6 @@
 
 // This is the default M-mode trap handler. It forwards timer interrupts to
 // S-mode and loops for all other interrupt and exception causes.
-.section .text.mcode
 .align 4
 mtrap_entry:
 	csrrw sp, 0x340, sp // mscratch

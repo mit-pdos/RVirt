@@ -87,12 +87,13 @@ impl UartWriterInner {
     }
 }
 impl UartWriter {
+    #[cfg(not(feature = "physical_symbol_addresses"))]
     pub fn putchar(&mut self, ch: u8) {
         self.inner.putchar(self.va.unwrap_or(self.pa), ch);
     }
 
-    #[link_section = ".text.init"]
-    pub fn mputchar(&mut self, ch: u8) {
+    #[cfg(feature = "physical_symbol_addresses")]
+    pub fn putchar(&mut self, ch: u8) {
         self.inner.putchar(self.pa, ch);
     }
 
@@ -160,7 +161,7 @@ pub mod macros {
             use crate::SHARED_STATICS;
             let mut writer = SHARED_STATICS.uart_writer.lock();
             for byte in concat!("\u{1b}[33m", $s,"\u{1b}[0m").bytes() {
-                writer.mputchar(byte);
+                writer.putchar(byte);
             }
         });
         ($fmt:expr, $($arg:expr),*) => ({
@@ -195,7 +196,6 @@ pub fn guest_println(guestid: u64, line: &[u8]) {
     writer.write_str("\n").unwrap();
 }
 
-#[link_section = ".text.init"]
 pub fn mwriter<'a>() -> Option<MutexGuard<'a, UartWriter>> {
     SHARED_STATICS.uart_writer.try_lock()
 }

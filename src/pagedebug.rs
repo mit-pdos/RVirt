@@ -12,7 +12,6 @@ pub const MODE_SV64_RES: u8 = 11;
 
 global_asm!(include_str!("loadaddress.S"));
 
-#[link_section = ".text.init"]
 fn mode_to_str(mode: u8) -> &'static str {
     match mode {
         MODE_NONE => "bare: no translation or protection",
@@ -25,7 +24,6 @@ fn mode_to_str(mode: u8) -> &'static str {
 }
 
 // returns (mode, asid, ppn)
-#[link_section = ".text.init"]
 fn parse_satp(satp: u64) -> (u8, u16, u64) {
     ((satp >> 60) as u8, (satp >> 44) as u16, satp & 0xfff_ffff_ffff)
 }
@@ -50,7 +48,6 @@ enum PageWalkError {
     ErrMisalignedSuperpage,
 }
 
-#[link_section = ".text.init"]
 fn pwe_to_str(err: PageWalkError) -> &'static str {
     match err {
         PageWalkError::ErrNone => "ok",
@@ -71,13 +68,11 @@ const PPN_BITS_EACH: u8 = 9;
 const PAGE_BITS: u8 = 12;
 const PAGE_SIZE: u64 = 1u64 << PAGE_BITS;
 
-#[link_section = ".text.init"]
 fn sign_extend(v: u64, bits: u8) -> u64 {
     (((v << bits) as i64) >> bits) as u64
 }
 
 // TODO: handle getting blocked by PMP
-#[link_section = ".text.init"]
 unsafe fn walk_page_table_iter<Data>(a: u64, i: u8, vabase: u64, cb: PageWalkerCallback<Data>, data: &mut Data) {
     for entry in 0..512u64 {
         let pte = *((a + entry * PTESIZE_SV39) as *const u64);
@@ -115,12 +110,10 @@ unsafe fn walk_page_table_iter<Data>(a: u64, i: u8, vabase: u64, cb: PageWalkerC
     }
 }
 
-#[link_section = ".text.init"]
 unsafe fn walk_page_table<Data>(root: u64, cb: PageWalkerCallback<Data>, data: &mut Data) {
     walk_page_table_iter(root, LEVELS_SV39 - 1, 0, cb, data);
 }
 
-#[link_section = ".text.init"]
 fn flag(flags: u8, f: &str, flag: u8) {
     let mut spaces = 1;
     if (flags & flag) == flag {
@@ -145,7 +138,6 @@ struct CompressionWalker<'data, Data> {
     lasterr: PageWalkError,
 }
 
-#[link_section = ".text.init"]
 fn compression_walk<Data>(flags: u8, rsw: u8, va: u64, pa: u64, len: u64, err: PageWalkError, walker: &mut CompressionWalker<Data>) {
     if walker.haslast && (flags != walker.lastflags || rsw != walker.lastrsw || va != walker.endva || (pa != walker.endpa && err != ErrUnmapped) || err != walker.lasterr) {
         /*if flags != walker.lastflags {
@@ -189,7 +181,6 @@ fn compression_walk<Data>(flags: u8, rsw: u8, va: u64, pa: u64, len: u64, err: P
     }
 }
 
-#[link_section = ".text.init"]
 #[inline(never)]
 unsafe fn walk_page_table_compressed<Data>(root: u64, cb: PageWalkerCallback<Data>, data: &mut Data) {
     let mut ourdata = CompressionWalker{
@@ -206,7 +197,6 @@ unsafe fn walk_page_table_compressed<Data>(root: u64, cb: PageWalkerCallback<Dat
     walk_page_table(root, compression_walk, &mut ourdata);
 }
 
-#[link_section = ".text.init"]
 #[no_mangle]
 fn debug_walk(flags: u8, rsw: u8, va: u64, pa: u64, len: u64, err: PageWalkError, _: &mut ()) {
     flag(flags, "VALID", FLAG_VALID);
@@ -236,7 +226,6 @@ fn debug_walk(flags: u8, rsw: u8, va: u64, pa: u64, len: u64, err: PageWalkError
     machine_debug_newline();
 }
 
-#[link_section = ".text.init"]
 #[inline(never)]
 pub fn debug_paging() {
     machine_debug_mark_begin();
