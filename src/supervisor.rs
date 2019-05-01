@@ -87,7 +87,7 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
                         (machine.initrd_end - machine.initrd_start) as usize);
 
         // Send IPI
-        *SHARED_STATICS.ipi_reason_array[hartid as usize].lock() = Some(Reason::EnterSupervisor {
+        *SHARED_STATICS.ipi_reason_array[hartid as usize].lock() = Some(IpiReason::EnterSupervisor {
             a0: hartid,
             a1: hart_base_pa + 4096,
             a2: hart_base_pa,

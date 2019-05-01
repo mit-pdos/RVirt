@@ -122,7 +122,7 @@ pub unsafe fn handle_ipi() {
     let reason = { SHARED_STATICS.ipi_reason_array.get_unchecked(hartid as usize).lock().take() };
 
     match reason {
-        Some(Reason::EnterSupervisor{ a0, a1, a2, a3, sp, satp, mepc}) => {
+        Some(IpiReason::EnterSupervisor{ a0, a1, a2, a3, sp, satp, mepc}) => {
             csrw!(mepc, mepc);
             csrw!(satp, satp);
             asm!("mv a0, $0

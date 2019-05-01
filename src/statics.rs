@@ -2,14 +2,26 @@
 use core::sync::atomic::AtomicBool;
 use spin::Mutex;
 use crate::print::{self, UartWriter};
-use crate::ipi::Reason;
 use crate::constants::*;
+
+#[derive(Copy, Clone, Debug)]
+pub enum IpiReason {
+    EnterSupervisor {
+        a0: u64,
+        a1: u64,
+        a2: u64,
+        a3: u64,
+        sp: u64,
+        satp: u64,
+        mepc: u64,
+    }
+}
 
 #[repr(C,align(4096))]
 pub struct Shared {
     pub boot_page_table: [u64; 1024],
     pub uart_writer: Mutex<UartWriter>,
-    pub ipi_reason_array: [Mutex<Option<Reason>>; MAX_HOST_HARTS],
+    pub ipi_reason_array: [Mutex<Option<IpiReason>>; MAX_HOST_HARTS],
     pub hart_lottery: AtomicBool,
 }
 
@@ -32,7 +44,7 @@ impl core::ops::Deref for ConditionalPointer {
 
 
 
-const MR: Mutex<Option<Reason>> = Mutex::new(None);
+const MR: Mutex<Option<IpiReason>> = Mutex::new(None);
 
 /// This static is never accessed directly, but is needed so that the memory backing SHARED_STATICS
 /// is properly initialized.
