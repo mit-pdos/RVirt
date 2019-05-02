@@ -143,7 +143,7 @@ impl PageTables {
     pub fn install_root(&self, root: PageTableRoot) {
         let new_satp = (8 << 60) | (self.root_pa(root) >> 12);
         if csrr!(satp) != new_satp {
-            csrw!(satp, new_satp);
+            unsafe { csrw!(satp, new_satp) }
             riscv::sfence_vma();
         }
     }

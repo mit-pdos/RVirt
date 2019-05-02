@@ -306,7 +306,6 @@ impl Context {
     }
 
     pub fn set_csr(&mut self, csr: u32, value: u64) -> bool {
-        // println!("setting CSR={:#x} to {:#x} (pc={:#x})", csr, value, csrr!(sepc));
         match csr as u64 {
             csr::sstatus => {
                 // User interrupts not supported
@@ -319,7 +318,7 @@ impl Context {
                     unimplemented!("STATUS.MXR");
                 }
                 if changed & STATUS_FS != 0 {
-                    csrw!(sstatus, value & STATUS_FS | (csrr!(sstatus) & !STATUS_FS));
+                    riscv::set_sstatus_fs(value);
                 }
 
                 if changed.get(STATUS_SIE) && value.get(STATUS_SIE) {

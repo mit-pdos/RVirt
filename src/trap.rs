@@ -253,7 +253,7 @@ pub fn strap() {
                 state.csrs.pop_sie();
                 state.smode = state.csrs.sstatus.get(STATUS_SPP);
                 state.csrs.sstatus.set(STATUS_SPP, false);
-                csrw!(sepc, state.csrs.sepc);
+                riscv::set_sepc(state.csrs.sepc);
                 advance_pc = false;
 
                 if !state.smode {
@@ -311,7 +311,7 @@ pub fn strap() {
         }
 
         if advance_pc {
-            csrw!(sepc, pc + len);
+            riscv::set_sepc(pc + len);
         }
         maybe_forward_interrupt(&mut state, csrr!(sepc));
     } else if cause == SCAUSE_ENV_CALL && state.smode {
@@ -337,7 +337,7 @@ pub fn strap() {
                 loop {}
             }
         }
-        csrw!(sepc, csrr!(sepc) + 4);
+        riscv::set_sepc(csrr!(sepc) + 4);
     } else {
         if cause != SCAUSE_ENV_CALL { // no need to print anything for guest syscalls...
             println!("Forward exception (cause = {}, smode={})!", cause, state.smode);
@@ -374,7 +374,7 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
         }
         0x5 => {
             // Timer
-            csrc!(sip, 1 << interrupt);
+            riscv::clear_sip(1 << interrupt);
             assert_eq!(csrr!(sip) & (1 << interrupt), 0);
 
             let time = state.host_clint.get_mtime();
@@ -449,8 +449,8 @@ fn maybe_forward_interrupt(state: &mut Context, sepc: u64) {
         state.smode = true;
 
         match state.csrs.stvec & TVEC_MODE {
-            0 => csrw!(sepc, state.csrs.stvec & TVEC_BASE),
-            1 => csrw!(sepc, (state.csrs.stvec & TVEC_BASE) + 4 * cause),
+            0 => riscv::set_sepc(state.csrs.stvec & TVEC_BASE),
+            1 => riscv::set_sepc((state.csrs.stvec & TVEC_BASE) + 4 * cause),
             _ => unreachable!(),
         }
     } else {
@@ -466,14 +466,14 @@ fn forward_exception(state: &mut Context, cause: u64, sepc: u64) {
     state.csrs.sstatus.set(STATUS_SPP, state.smode);
     state.csrs.stval = csrr!(stval);
     state.smode = true;
-    csrw!(sepc, state.csrs.stvec & TVEC_BASE);
+    riscv::set_sepc(state.csrs.stvec & TVEC_BASE);
 }
 
 pub fn set_register(state: &mut Context, reg: u32, value: u64) {
     match reg {
         0 => {},
         1 | 3..=31 => state.saved_registers[reg as u64 * 8] = value,
-        2 => csrw!(sscratch, value),
+        2 => riscv::set_sscratch(value),
         _ => unreachable!(),
     }
 }

@@ -2,7 +2,7 @@ use byteorder::{NativeEndian, ByteOrder};
 use riscv_decode::Instruction;
 use crate::context::Context;
 use crate::memory_region::MemoryRegion;
-use crate::{trap, pmap};
+use crate::{pmap, riscv, trap};
 
 pub const MAX_QUEUES: usize = 4;
 pub const MAX_DEVICES: usize = 4;
@@ -105,7 +105,7 @@ pub fn handle_device_access(state: &mut Context, guest_pa: u64, instruction: u32
             loop {}
         }
     }
-    csrw!(sepc, csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
+    riscv::set_sepc(csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
     true
 }
 
@@ -189,6 +189,6 @@ pub fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u64, ins
         }
     }
 
-    csrw!(sepc, csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
+    riscv::set_sepc(csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
     true
 }

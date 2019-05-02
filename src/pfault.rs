@@ -1,6 +1,6 @@
 use crate::context::Context;
 use crate::trap::{self, constants::SATP_PPN};
-use crate::{pmap::*, virtio};
+use crate::{pmap::*, riscv, virtio};
 use riscv_decode::Instruction;
 
 /// Perform any handling required in response to a guest page fault. Returns true if the fault could
@@ -111,7 +111,7 @@ fn handle_uart_access(state: &mut Context, guest_pa: u64, instruction: u32) -> b
         }
         _ => return false,
     }
-    csrw!(sepc, csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
+    riscv::set_sepc(csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
     true
 }
 
@@ -146,6 +146,6 @@ fn handle_plic_access(state: &mut Context, guest_pa: u64, instruction: u32) -> b
             loop {}
         }
     }
-    csrw!(sepc, csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
+    riscv::set_sepc(csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
     true
 }
