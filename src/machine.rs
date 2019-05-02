@@ -19,7 +19,7 @@ pub mod pmptest;
 
 // mandatory rust environment setup
 #[lang = "eh_personality"] extern fn eh_personality() {}
-#[panic_handler] fn panic(info: &::core::panic::PanicInfo) -> ! { machdebug::machine_debug_abort("panic()!"); loop{} }
+#[panic_handler] fn panic(_info: &::core::panic::PanicInfo) -> ! { machdebug::machine_debug_abort("panic()!"); loop{} }
 #[start] fn start(_argc: isize, _argv: *const *const u8) -> isize {0}
 #[no_mangle] fn abort() -> ! { machdebug::machine_debug_abort("abort()!"); loop {} }
 

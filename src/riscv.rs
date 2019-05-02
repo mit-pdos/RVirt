@@ -1,17 +1,4 @@
 
-
-#[macro_export]
-macro_rules! reg {
-    ( $r:ident ) => {
-        {
-            let value: u64;
-            #[allow(unused_unsafe)]
-            unsafe { asm!(concat!("mv $0, ", stringify!($r)) : "=r"(value)) };
-            value
-        }
-    };
-}
-
 /** atomic read from CSR */
 #[macro_export]
 macro_rules! csrr {
@@ -95,20 +82,14 @@ macro_rules! csrc {
     };
 }
 
-// #[macro_export]
-// macro_rules! csrci {
-//     ( $r:ident, $x:expr ) => {
-//         {
-//             const X: u64 = $x;
-//             #[allow(unused_unsafe)]
-//             unsafe { asm!("csrci $0, $1" :: "i"(crate::csr::$r), "i"(X)) };
-//         }
-//     };
-// }
 pub fn sfence_vma() {
     unsafe { asm!("sfence.vma" ::: "memory" : "volatile") }
 }
 
 pub fn barrier() {
     unsafe { asm!("" ::: "memory" : "volatile") }
+}
+
+pub fn fence_i() {
+    unsafe { asm!("fence.i" :::: "volatile") }
 }

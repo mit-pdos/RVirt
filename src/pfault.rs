@@ -5,7 +5,7 @@ use riscv_decode::Instruction;
 
 /// Perform any handling required in response to a guest page fault. Returns true if the fault could
 /// be handled, or false if it should be forwarded on to the guest.
-pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> bool {
+pub fn handle_page_fault(state: &mut Context, cause: u64, instruction: Option<u32>) -> bool {
     let shadow = state.shadow();
     if shadow == PageTableRoot::MPA {
         println!("Page fault without guest paging enabled?");
@@ -63,7 +63,8 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
             if virtio::is_queue_access(state, translation.guest_pa) {
                 let guest_pa = (translation.guest_pa & !0xfff) | (guest_va & 0xfff);
                 let host_pa = (host_pa & !0xfff) | (guest_va & 0xfff);
-                return virtio::handle_queue_access(state, guest_pa, host_pa, pc);
+                let instruction = instruction.expect("attempted to execute code from virtio queue page");
+                return virtio::handle_queue_access(state, guest_pa, host_pa, instruction);
             }
 
             state.shadow_page_tables.set_mapping(
@@ -71,17 +72,18 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
             return true;
         } else if access != PTE_EXECUTE && state.smode {
             let pa = (translation.guest_pa & !0xfff) | (guest_va & 0xfff);
+            if let Some(instruction) = instruction {
+                if is_uart_access(pa) {
+                    return handle_uart_access(state, pa, instruction);
+                }
 
-            if is_uart_access(pa) {
-                return handle_uart_access(state, pa, pc);
-            }
+                if is_plic_access(pa) {
+                    return handle_plic_access(state, pa, instruction)
+                }
 
-            if is_plic_access(pa) {
-                return handle_plic_access(state, pa, pc)
-            }
-
-            if virtio::is_device_access(state, pa) {
-                return virtio::handle_device_access(state, pa, pc);
+                if virtio::is_device_access(state, pa) {
+                    return virtio::handle_device_access(state, pa, instruction);
+                }
             }
         }
     }
@@ -93,9 +95,8 @@ pub unsafe fn handle_page_fault(state: &mut Context, cause: u64, pc: u64) -> boo
 fn is_uart_access(guest_pa: u64) -> bool {
     guest_pa >= 0x10000000 && guest_pa < 0x10000100
 }
-unsafe fn handle_uart_access(state: &mut Context, guest_pa: u64, pc: u64) -> bool {
-    let (_instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
-    match decoded {
+fn handle_uart_access(state: &mut Context, guest_pa: u64, instruction: u32) -> bool {
+    match riscv_decode::decode(instruction).ok() {
         Some(Instruction::Lb(i)) => {
             let value = state.uart.read(&state.host_clint, guest_pa) as u64;
             trap::set_register(state, i.rd(), value);
@@ -105,12 +106,12 @@ unsafe fn handle_uart_access(state: &mut Context, guest_pa: u64, pc: u64) -> boo
             state.uart.write(&state.host_clint, guest_pa, value);
         }
         Some(instr) => {
-            println!("UART: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, pc);
+            println!("UART: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, csrr!(sepc));
             loop {}
         }
         _ => return false,
     }
-    csrw!(sepc, pc + len);
+    csrw!(sepc, csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
     true
 }
 
@@ -118,9 +119,8 @@ unsafe fn handle_uart_access(state: &mut Context, guest_pa: u64, pc: u64) -> boo
 fn is_plic_access(guest_pa: u64) -> bool {
     guest_pa >= 0x0c000000 && guest_pa < 0x10000000
 }
-unsafe fn handle_plic_access(state: &mut Context, guest_pa: u64, pc: u64) -> bool {
-    let (instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
-    match decoded {
+fn handle_plic_access(state: &mut Context, guest_pa: u64, instruction: u32) -> bool {
+    match riscv_decode::decode(instruction).ok() {
         Some(Instruction::Lw(i)) => {
             let value = state.plic.read_u32(guest_pa) as i32 as i64 as u64;
             // println!("PLIC: Read value {:#x} at address {:#x}", value, guest_pa);
@@ -138,14 +138,14 @@ unsafe fn handle_plic_access(state: &mut Context, guest_pa: u64, pc: u64) -> boo
             state.no_interrupt = false;
         }
         Some(instr) => {
-            println!("PLIC: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, pc);
+            println!("PLIC: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, csrr!(sepc));
             loop {}
         }
         _ => {
-            println!("Unrecognized instruction targetting PLIC {:#x} at {:#x}!", instruction, pc);
+            println!("Unrecognized instruction targetting PLIC {:#x} at {:#x}!", instruction, csrr!(sepc));
             loop {}
         }
     }
-    csrw!(sepc, pc + len);
+    csrw!(sepc, csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
     true
 }

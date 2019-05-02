@@ -1,12 +1,7 @@
 
 use rvirt::*;
-use crate::constants::SYMBOL_PA2VA_OFFSET;
-use crate::fdt::*;
 use crate::pagedebug;
-use crate::pmap::{self, BootPageTable};
 use crate::pmp;
-use crate::print;
-use crate::trap::constants::*;
 
 global_asm!(include_str!("mcode.S"));
 

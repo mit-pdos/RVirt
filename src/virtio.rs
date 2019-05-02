@@ -1,5 +1,7 @@
+use byteorder::{NativeEndian, ByteOrder};
 use riscv_decode::Instruction;
 use crate::context::Context;
+use crate::memory_region::MemoryRegion;
 use crate::{trap, pmap};
 
 pub const MAX_QUEUES: usize = 4;
@@ -15,20 +17,18 @@ pub struct Queue {
     size: u64,
 }
 
-#[derive(Copy, Clone)]
 pub struct Device {
     /// Virtual Queue Index, offset=0x30
     queue_sel: u32,
     queues: [Queue; MAX_QUEUES],
-    /// Base host physical address of this device
-    host_base_address: u64,
+    device_registers: MemoryRegion<u32>,
 }
 impl Device {
-    pub fn new(host_base_address: u64) -> Self {
+    pub unsafe fn new(host_base_address: u64) -> Self {
         Self {
             queue_sel: 0,
             queues: [Queue {guest_pa: 0, host_pa: 0, size: 0}; MAX_QUEUES],
-            host_base_address,
+            device_registers: MemoryRegion::with_base_address(pmap::pa2va(host_base_address), 0, 0x1000),
         }
     }
 }
@@ -38,34 +38,24 @@ pub fn is_device_access(state: &mut Context, guest_pa: u64) -> bool {
     guest_pa >= 0x10001000 && guest_pa < 0x10001000 + 0x1000 * state.virtio.devices.len() as u64
 }
 
-pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) -> bool {
+pub fn handle_device_access(state: &mut Context, guest_pa: u64, instruction: u32) -> bool {
     let device = ((guest_pa - 0x10001000) / 0x1000) as usize;
     let offset = guest_pa & 0xfff;
-    let host_pa = state.virtio.devices[device].host_base_address + offset;
-    // println!("VIRTIO: {:x} -> {:x}", guest_pa, host_pa);
 
-    let read_u32 = |pa: u64| {
-        let mut value = *(crate::pmap::pa2va(pa) as *const u32);
-        if offset == 0x10 {
-            value = value & !(1 << 28); // No VIRTIO_F_INDIRECT_DESC
-        } else if offset == 0x34 {
-           value = value.min(256); // ensure queues take up at most one page
-        }
-        value
-    };
+    let mut current = state.virtio.devices[device].device_registers[offset & !0x3];
+    if offset == 0x10 {
+        current = current & !(1 << 28); // No VIRTIO_F_INDIRECT_DESC
+    } else if offset == 0x34 {
+        current = current.min(256); // ensure queues take up at most one page
+    }
 
-    let (instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
-    match decoded {
+    match riscv_decode::decode(instruction).ok() {
         Some(Instruction::Lw(i)) => {
-            let value = read_u32(host_pa);
-            // println!("VIRTIO: Read value {:#x} at address {:#x}", value, host_pa);
-            trap::set_register(state, i.rd(), value as u64)
+            trap::set_register(state, i.rd(), current as u64)
         }
         Some(Instruction::Lb(i)) => {
             assert!(offset >= 0x100);
-            let value = read_u32(host_pa & !0x3);
-            let value = (value >> (8*(host_pa & 0x3))) & 0xff;
-            // println!("VIRTIO: Read byte {:#x} at address {:#x}", value, host_pa);
+            let value = (current >> (8*(offset & 0x3))) & 0xff;
             trap::set_register(state, i.rd(), value as u64)
         }
         Some(Instruction::Sw(i)) => {
@@ -78,13 +68,13 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
                 let queue = &mut state.virtio.devices[device].queues[queue_sel];
                 queue.size = value as u64;
 
-                // TODO: support changing queue sizes (is this ever done?)
+                // Linux never changes queue sizes, so this isn't supported.
                 assert_eq!(queue.host_pa, 0);
             } else if offset == 0x40 { // QueuePFN
                 let queue_sel = state.virtio.devices[device].queue_sel as usize;
                 let queue = &mut state.virtio.devices[device].queues[queue_sel];
 
-                // TODO: support releasing queues and remove this assert.
+                // Linux never releases queues, so this is currently unimplemented.
                 assert_eq!(queue.host_pa, 0);
 
                 if value != 0 {
@@ -99,28 +89,23 @@ pub unsafe fn handle_device_access(state: &mut Context, guest_pa: u64, pc: u64) 
                 pmap::flush_shadow_page_table(&mut state.shadow_page_tables);
 
                 state.virtio.queue_guest_pages.push(queue.guest_pa);
-
-                let va = pmap::pa2va(queue.host_pa);
                 for i in 0..queue.size {
-                    let ptr = (va + i * 16) as *mut u64;
-                    let value = *ptr;
-                    if value != 0 {
-                        *ptr = value.wrapping_add(state.guest_shift);
-                    }
+                    let value = &mut state.guest_memory[queue.guest_pa + i * 16];
+                    *value = (*value).wrapping_add(state.guest_shift);
                 }
             }
-            *(crate::pmap::pa2va(host_pa) as *mut u32) = value;
+            state.virtio.devices[device].device_registers[offset] = value;
         }
         Some(instr) => {
-            println!("VIRTIO: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, host_pa, pc);
+            println!("VIRTIO: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, csrr!(sepc));
             loop {}
         }
         None => {
-            println!("Unrecognized instruction targetting VIRTIO {:#x} at {:#x}!", instruction, pc);
+            println!("Unrecognized instruction targetting VIRTIO {:#x} at {:#x}!", instruction, csrr!(sepc));
             loop {}
         }
     }
-    csrw!(sepc, pc + len);
+    csrw!(sepc, csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
     true
 }
 
@@ -133,62 +118,77 @@ pub fn is_queue_access(state: &mut Context, guest_page: u64) -> bool {
     false
 }
 
-pub unsafe fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u64, pc: u64) -> bool {
+pub fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u64, instruction: u32) -> bool {
     let mut hit_queue = false;
     for d in &state.virtio.devices {
         for q in &d.queues {
-            if guest_pa >= q.guest_pa && guest_pa < q.guest_pa + q.size * 16 && guest_pa & 0xf < 8{
+            if guest_pa >= q.guest_pa && guest_pa < q.guest_pa + q.size * 16 && guest_pa & 0xf < 8 {
                 hit_queue = true;
             }
         }
     }
 
-    let (instruction, decoded, len) = trap::decode_instruction_at_address(state, pc);
-    if decoded.is_none() {
-        println!("Unrecognized instruction targetting VQUEUE {:#x} at {:#x}!", instruction, pc);
+    let decoded = riscv_decode::decode(instruction);
+    if let Err(err) = decoded {
+        println!("Unrecognized instruction targetting VQUEUE {:#x} at {:#x} (error: {:?})!",
+                 instruction, csrr!(sepc), err);
         loop {}
     }
 
     if hit_queue {
         match decoded.unwrap() {
             Instruction::Ld(i) => {
-                trap::set_register(state, i.rd(), (*(pmap::pa2va(host_pa) as *const u64)).wrapping_sub(state.guest_shift));
+                trap::set_register(state, i.rd(), state.guest_memory[guest_pa].wrapping_sub(state.guest_shift));
             }
             Instruction::Sd(i) => {
                 let value = trap::get_register(state, i.rs2());
                 if value == 0 {
-                    *(pmap::pa2va(host_pa) as *mut u64) = 0;
+                    state.guest_memory[guest_pa] = 0;
                 } else if state.guest_memory.in_region(value) {
-                    *(pmap::pa2va(host_pa) as *mut u64) = value.wrapping_add(state.guest_shift);
+                    state.guest_memory[guest_pa] = value.wrapping_add(state.guest_shift);
                 } else {
                     loop {}
                 }
             }
             instr => {
-                println!("VQUEUE: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, host_pa, pc);
+                println!("VQUEUE: Instruction {:?} used to target addr {:#x} from pc {:#x}",
+                         instr, host_pa, csrr!(sepc));
                 loop {}
             }
         }
     } else {
+        let index = guest_pa & !0x7;
+        let offset = (guest_pa % 8) as usize;
+        let mut current = state.guest_memory[index].to_ne_bytes();
         match decoded.as_ref().unwrap() {
-            Instruction::Ld(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const u64)),
-            Instruction::Lwu(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const u32) as u64),
-            Instruction::Lhu(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const u16) as u64),
-            Instruction::Lbu(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const u8) as u64),
-            Instruction::Lw(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const i32) as i64 as u64),
-            Instruction::Lh(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const i16) as i64 as u64),
-            Instruction::Lb(i) => trap::set_register(state, i.rd(), *(pmap::pa2va(host_pa) as *const i8) as i64 as u64),
-            Instruction::Sd(i) => *(pmap::pa2va(host_pa) as *mut u64) = trap::get_register(state, i.rs2()),
-            Instruction::Sw(i) => *(pmap::pa2va(host_pa) as *mut u32) = trap::get_register(state, i.rs2()) as u32,
-            Instruction::Sh(i) => *(pmap::pa2va(host_pa) as *mut u16) = trap::get_register(state, i.rs2()) as u16,
-            Instruction::Sb(i) => *(pmap::pa2va(host_pa) as *mut u8) = trap::get_register(state, i.rs2()) as u8,
+            Instruction::Ld(i) => trap::set_register(state, i.rd(), u64::from_ne_bytes(current)),
+            Instruction::Lwu(i) => trap::set_register(state, i.rd(), NativeEndian::read_u32(&current[offset..]) as u64),
+            Instruction::Lhu(i) => trap::set_register(state, i.rd(), NativeEndian::read_u16(&current[offset..]) as u64),
+            Instruction::Lbu(i) => trap::set_register(state, i.rd(), current[offset] as u64),
+            Instruction::Lw(i) => trap::set_register(state, i.rd(), NativeEndian::read_i32(&current[offset..]) as i64 as u64),
+            Instruction::Lh(i) => trap::set_register(state, i.rd(), NativeEndian::read_i16(&current[offset..]) as i64 as u64),
+            Instruction::Lb(i) => trap::set_register(state, i.rd(), current[offset] as i8 as i64 as u64),
+            Instruction::Sd(i) => state.guest_memory[index] = trap::get_register(state, i.rs2()),
+            Instruction::Sw(i) => {
+                NativeEndian::write_u32(&mut current[offset..], trap::get_register(state, i.rs2()) as u32);
+                state.guest_memory[index] = u64::from_ne_bytes(current);
+            }
+            Instruction::Sh(i) => {
+                NativeEndian::write_u16(&mut current[offset..], trap::get_register(state, i.rs2()) as u16);
+                state.guest_memory[index] = u64::from_ne_bytes(current);
+            }
+            Instruction::Sb(i) => {
+                current[offset] = trap::get_register(state, i.rs2()) as u8;
+                state.guest_memory[index] = u64::from_ne_bytes(current);
+            }
             instr => {
-                println!("VQUEUE: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, host_pa, pc);
+                println!("VQUEUE: Instruction {:?} used to target addr {:#x} from pc {:#x}",
+                         instr, host_pa, csrr!(sepc));
                 loop {}
             }
         }
     }
 
-    csrw!(sepc, pc + len);
+    csrw!(sepc, csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);
     true
 }

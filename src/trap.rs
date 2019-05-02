@@ -1,6 +1,6 @@
 use riscv_decode::Instruction;
 use crate::context::{Context, CONTEXT};
-use crate::{pfault, pmap, sum};
+use crate::{pfault, pmap, riscv, sum};
 
 #[allow(unused)]
 pub mod constants {
@@ -190,7 +190,7 @@ pub unsafe fn strap_entry() -> ! {
 }
 
 #[no_mangle]
-pub unsafe fn strap() {
+pub fn strap() {
     let cause = csrr!(scause);
     let status = csrr!(sstatus);
 
@@ -200,11 +200,16 @@ pub unsafe fn strap() {
         println!("stval = {:#x}", csrr!(stval));
         println!("cause = {}", cause);
 
-        let region: crate::memory_region::MemoryRegion = crate::memory_region::MemoryRegion::with_base_address(SSTACK_BASE, 0, 32 * 8);
-        println!("reg ra = {:#x}", region[1 * 8]);
-        println!("reg sp = {:#x}", csrr!(sscratch));
+        // No other threads could be accessing CONTEXT here, and even if we interrupted a critical
+        // section, we're about to crash anyway so it doesn't matter that much.
+        unsafe { CONTEXT.force_unlock() }
+        let mut state = CONTEXT.lock();
+        let mut state = (&mut *state).as_mut().unwrap();
+
+        println!("reg ra = {:#x}", get_register(&mut state, 1));
+        println!("reg sp = {:#x}", get_register(&mut state, 2));
         for i in 3..32 {
-            println!("reg x{} = {:#x}", i, region[i * 8]);
+            println!("reg x{} = {:#x}", i, get_register(&mut state, i));
         }
 
         loop {}
@@ -213,21 +218,34 @@ pub unsafe fn strap() {
     let mut state = CONTEXT.lock();
     let mut state = (&mut *state).as_mut().unwrap();
 
+    // For the processor to have generated a load/store page fault or an illegal instruction fault,
+    // the processor must have been able to load the relevant instruction (or else an access fault
+    // or instruction page fault would have been triggered). Thus, it is safe to access memory
+    // pointed to by `sepc`.
+    let instruction = match cause {
+        SCAUSE_LOAD_PAGE_FAULT |
+        SCAUSE_STORE_PAGE_FAULT |
+        SCAUSE_ILLEGAL_INSN => unsafe {
+            Some(load_instruction_at_address(&mut state, csrr!(sepc)))
+        }
+        _ => None,
+    };
+
     if (cause as isize) < 0 {
         handle_interrupt(&mut state, cause);
         maybe_forward_interrupt(&mut state, csrr!(sepc));
     } else if cause == SCAUSE_INSN_PAGE_FAULT || cause == SCAUSE_LOAD_PAGE_FAULT || cause == SCAUSE_STORE_PAGE_FAULT {
         let pc = csrr!(sepc);
-        if pfault::handle_page_fault(&mut state, cause, pc) {
+        if pfault::handle_page_fault(&mut state, cause, instruction.map(|i|i.0)) {
             maybe_forward_interrupt(&mut state, pc);
         } else {
             forward_exception(&mut state, cause, pc);
         }
     } else if cause == SCAUSE_ILLEGAL_INSN && state.smode {
         let pc = csrr!(sepc);
-        let (instruction, decoded, len) = decode_instruction_at_address(&mut state, pc);
+        let (instruction, len) = instruction.unwrap();
         let mut advance_pc = true;
-        match decoded {
+        match riscv_decode::decode(instruction).ok() {
             Some(Instruction::Sret) => {
                 if !state.csrs.sstatus.get(STATUS_SIE) && state.csrs.sstatus.get(STATUS_SPIE) {
                     state.no_interrupt = false;
@@ -307,7 +325,7 @@ pub unsafe fn strap() {
                 let value = get_register(state, 10) as u8;
                 state.uart.output_byte(value)
             }
-            5 => asm!("fence.i" :::: "volatile"),
+            5 => riscv::fence_i(),
             6 | 7 => {
                 // Current versions of the Linux kernel pass wrong arguments to these SBI calls. As
                 // a result, this function ignores the arguments and just does a global fence. This
@@ -468,15 +486,14 @@ pub fn get_register(state: &mut Context, reg: u32) -> u64 {
     }
 }
 
-pub unsafe fn decode_instruction_at_address(_state: &mut Context, guest_va: u64) -> (u32, Option<Instruction>, u64) {
+pub unsafe fn load_instruction_at_address(_state: &mut Context, guest_va: u64) -> (u32, u64) {
     let pc_ptr = guest_va as *const u16;
-    let (len, instruction) = sum::access_user_memory(||{
+    sum::access_user_memory(||{
         let il: u16 = *pc_ptr;
         match riscv_decode::instruction_length(il) {
-            2 => (2, il as u32),
-            4 => (4, il as u32 | ((*pc_ptr.offset(1) as u32) << 16)),
+            2 => (il as u32, 2),
+            4 => (il as u32 | ((*pc_ptr.offset(1) as u32) << 16), 4),
             _ => unreachable!(),
         }
-    });
-    (instruction, riscv_decode::decode(instruction).ok(), len as u64)
+    })
 }

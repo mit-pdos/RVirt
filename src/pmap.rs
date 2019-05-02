@@ -234,10 +234,18 @@ pub fn is_sv39(va: u64) -> bool {
     shifted == 0 || shifted == 0x3ffffff
 }
 
+pub enum PageTableLevel {
+    Level4KB,
+    Level2MB,
+    Level1GB,
+    Level512GB,
+}
+
 pub struct AddressTranslation {
     pub pte_value: u64,
     pub pte_addr: u64,
     pub guest_pa: u64,
+    pub level: PageTableLevel,
 }
 
 // Returns the guest physical address associated with a given guest virtual address, by walking
@@ -262,7 +270,19 @@ pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64
                 0 => ((pte >> 28) << 30) | (addr & 0x3fffffff),
                 _ => unreachable!(),
             };
-            return Some(AddressTranslation { guest_pa, pte_addr, pte_value: pte });
+            let level = match level {
+                0 => PageTableLevel::Level1GB,
+                1 => PageTableLevel::Level2MB,
+                2 => PageTableLevel::Level4KB,
+                _ => unreachable!(),
+            };
+
+            return Some(AddressTranslation {
+                guest_pa,
+                pte_addr,
+                pte_value: pte,
+                level,
+            });
         } else {
             page_table = (pte >> 10) << 12;
         }
