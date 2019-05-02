@@ -242,7 +242,7 @@ pub unsafe fn strap() {
                     state.no_interrupt = false;
                 }
             }
-            Some(fence @ Instruction::SfenceVma(_)) => pmap::handle_sfence_vma(&mut state, fence),
+            Some(Instruction::SfenceVma(rtype)) => pmap::handle_sfence_vma(&mut state, rtype),
             Some(Instruction::Csrrw(i)) => if let Some(prev) = state.get_csr(i.csr()) {
                 let value = get_register(state, i.rs1());
                 state.set_csr(i.csr(), value);
@@ -308,8 +308,12 @@ pub unsafe fn strap() {
                 state.uart.output_byte(value)
             }
             5 => asm!("fence.i" :::: "volatile"),
-            6 | 7 => pmap::handle_sfence_vma(&mut state,
-                                             Instruction::SfenceVma(riscv_decode::types::RType(0)) /* TODO */),
+            6 | 7 => {
+                // Current versions of the Linux kernel pass wrong arguments to these SBI calls. As
+                // a result, this function ignores the arguments and just does a global fence. This
+                // will eventually be fixed by https://patchwork.kernel.org/patch/10872353.
+                pmap::flush_shadow_page_table(&mut state.shadow_page_tables);
+            }
             i => {
                 println!("Got ecall from guest function={}!", i);
                 loop {}

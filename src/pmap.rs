@@ -2,9 +2,9 @@ use crate::fdt::MachineMeta;
 use crate::context::Context;
 use crate::constants::SYMBOL_PA2VA_OFFSET;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
-use crate::{riscv, statics};
+use crate::{riscv, statics, trap};
 use core::ptr;
-use riscv_decode::Instruction;
+use riscv_decode::types::RType;
 
 const PAGE_SIZE: u64 = 4096;
 const HPAGE_SIZE: u64 = 2 * 1024 * 1024;
@@ -410,8 +410,19 @@ pub fn flush_shadow_page_table(shadow_page_tables: &mut PageTables) {
 }
 
 #[inline]
-pub fn handle_sfence_vma(state: &mut Context, _instruction: Instruction) {
-    flush_shadow_page_table(&mut state.shadow_page_tables);
+pub fn handle_sfence_vma(state: &mut Context, instruction: RType) {
+    if instruction.rs1() == 0 {
+        flush_shadow_page_table(&mut state.shadow_page_tables);
+    } else {
+        let va = trap::get_register(state, instruction.rs1());
+        if va < DIRECT_MAP_OFFSET {
+            for &root in &[UVA, KVA, MVA] {
+                let pte_addr = state.shadow_page_tables.pte_for_addr(root, va);
+                state.shadow_page_tables.region.set_invalid_pte(pte_addr, 0);
+            }
+            riscv::sfence_vma();
+        }
+    }
 }
 
 pub fn read64(guest_memory: &MemoryRegion, page_table_ppn: u64, guest_va: u64) -> Option<u64> {
