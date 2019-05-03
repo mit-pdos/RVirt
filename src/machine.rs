@@ -135,3 +135,27 @@ pub unsafe fn handle_ipi() {
         }
     }
 }
+
+#[no_mangle]
+pub unsafe fn forward_exception() {
+    use crate::trap::constants::*;
+
+    csrw!(sepc, csrr!(mepc));
+    csrw!(scause, csrr!(mcause));
+    csrw!(stval, csrr!(mtval));
+    csrw!(mepc, csrr!(stvec) & !0x3);
+
+    let status = csrr!(mstatus);
+    if status & STATUS_SIE != 0 {
+        csrs!(mstatus, STATUS_SPIE);
+    } else {
+        csrc!(mstatus, STATUS_SPIE);
+    }
+    if status & STATUS_MPP_S != 0 {
+        csrs!(mstatus, STATUS_SPP);
+    } else {
+        csrc!(mstatus, STATUS_SPP);
+    }
+    csrc!(mstatus, STATUS_SIE | STATUS_MPP_M);
+    csrs!(mstatus, STATUS_MPP_S);
+}

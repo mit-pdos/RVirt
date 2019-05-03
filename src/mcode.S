@@ -39,6 +39,8 @@ mtrap_entry:
 	sd a7, 120(sp)
 
 	csrr t0, 0x342 // mcause
+	bgez t0, exception
+
 	li t1, 0x8000000000000003
 	beq t0, t1, msoftware_interrupt
 
@@ -72,6 +74,10 @@ mtimer_interrupt:
 
 mexternal_interrupt:
 	j mexternal_interrupt
+
+exception:
+	call forward_exception
+	j return
 
 return:
 	ld ra, 0(sp)
