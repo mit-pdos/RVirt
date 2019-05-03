@@ -86,6 +86,7 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
 
         *(pa2va(machine.plic_address + 0x200000 + 0x1000 * hart.plic_context) as *mut u32) = 0;
         *(pa2va(machine.plic_address + 0x2000 + 0x80 * hart.plic_context) as *mut u32) = irq_mask;
+        *(pa2va(machine.plic_address + 0x2000 + 0x80 * hart.plic_context + 4) as *mut u32) = 0;
 
         (*(pa2va(hart_base_pa) as *mut pmap::BootPageTable)).init();
         core::ptr::copy(pa2va(device_tree_blob) as *const u8,
@@ -130,6 +131,7 @@ unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, hart_base_pa: u64, gues
     csrw!(stvec, crate::trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
     csrs!(sstatus, trap::constants::STATUS_SUM);
+    csrc!(sstatus, trap::constants::STATUS_SPP);
 
     let guestid = if guestid == u64::max_value() {
         None
