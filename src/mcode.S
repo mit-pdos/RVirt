@@ -58,12 +58,12 @@ msoftware_interrupt:
 
 mtimer_interrupt:
 	li t0, 0x80
-	csrc 0x344, t0 // mip.mtip = 0
+	csrc mip, t0 // mip.mtip = 0
 
-	li t0, 0x20
-	csrs 0x144, t0 // sip.stip = 1
+	li t0, 0x02
+	csrs mip, t0 // mip.stip = 1
 
-	csrr t0, 0xf14 // mhartid
+	csrr t0, mhartid
 	slli t0, t0, 3
 	li t1, 0x2004000
 	add t1, t0, t1

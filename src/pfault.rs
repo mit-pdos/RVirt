@@ -69,6 +69,7 @@ pub fn handle_page_fault(state: &mut Context, cause: u64, instruction: Option<u3
 
             state.shadow_page_tables.set_mapping(
                 shadow, page, (host_pa >> 2) | perm | PTE_AD | PTE_USER | PTE_VALID);
+            riscv::sfence_vma_addr(guest_va);
             return true;
         } else if access != PTE_EXECUTE && state.smode {
             let pa = (translation.guest_pa & !0xfff) | (guest_va & 0xfff);

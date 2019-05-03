@@ -83,12 +83,20 @@ pub fn sfence_vma() {
     unsafe { asm!("sfence.vma" ::: "memory" : "volatile") }
 }
 
+pub fn sfence_vma_addr(vaddr: u64) {
+    unsafe { asm!("sfence.vma $0" :: "r"(vaddr) : "memory" : "volatile") }
+}
+
 pub fn barrier() {
     unsafe { asm!("" ::: "memory" : "volatile") }
 }
 
 pub fn fence_i() {
     unsafe { asm!("fence.i" :::: "volatile") }
+}
+
+pub fn wfi() {
+    unsafe { asm!("wfi" :::: "volatile") }
 }
 
 /// Set the `sepc` CSR to the indicated value.

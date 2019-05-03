@@ -298,6 +298,7 @@ pub fn strap() {
                 }
                 set_register(state, i.rd(), prev);
             }
+            Some(Instruction::Wfi) => riscv::wfi(),
             Some(decoded) => {
                 println!("Unrecognized instruction! {:?} @ pc={:#x}", decoded, pc);
                 forward_exception(&mut state, cause, pc);
@@ -369,11 +370,10 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
     let interrupt = cause & 0xff;
     match interrupt {
         0x1 => {
-            // Software
-            unimplemented!();
-        }
-        0x5 => {
-            // Timer
+            // Software interrupt. M-mode code actually uses these to single timer interrupts
+            // because disarming a software interrupt doesn't require an SBI call but disarming
+            // timer interrupts might. In more detail, on some hardware `sip.stip` will not be
+            // writable while `sip.ssip` will be.
             riscv::clear_sip(1 << interrupt);
             assert_eq!(csrr!(sip) & (1 << interrupt), 0);
 
@@ -394,6 +394,12 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
             if next < 0xffffffff {
                 state.host_clint.set_mtimecmp(next);
             }
+        }
+        0x5 => {
+            // Supervisor timer interrupt. This is unreachable because the M-mode code will always
+            // generate supervisor *software* interrupts instead. See the case above for more
+            // details.
+            unreachable!();
         }
         0x9 => {
             // External

@@ -56,9 +56,9 @@ const MR: Mutex<Option<IpiReason>> = Mutex::new(None);
 #[link_section = ".shared.data"]
 pub static __SHARED_STATICS_IMPL: Shared = Shared {
     uart_writer: Mutex::new(UartWriter {
-        pa: 0x10000000,
+        pa: 0x10010000,
         va: None,
-        inner: print::UartWriterInner::Ns16550a { initialized: false },
+        inner: print::UartWriterInner::SiFive,
     }),
     ipi_reason_array: [MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR,],
     boot_page_table: [0; 1024],
