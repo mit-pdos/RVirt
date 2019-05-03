@@ -31,20 +31,20 @@ pub enum UartType {
     SiFive,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Device {
     pub base_address: u64,
     pub size: u64,
     pub irq: u64,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Hart {
     pub hartid: u64,
     pub plic_context: u64,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct MachineMeta {
     pub physical_memory_offset: u64,
     pub physical_memory_size: u64,

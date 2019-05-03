@@ -45,6 +45,7 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     // successfully printing output.
     assert!(machine.initrd_end <= machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE);
     assert!(machine.initrd_end - machine.initrd_start <= pmap::HEAP_SIZE);
+    assert!(machine.harts.iter().any(|h| h.hartid == hartid));
     if machine.initrd_end == 0 {
         println!("WARN: No guest kernel provided. Make sure to pass one with `-initrd ...`");
     }
@@ -61,10 +62,16 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
         *(pa2va(machine.plic_address + i*4) as *mut u32) = 1;
     }
 
-    let mut guestid = 1;
-    let single_guest = machine.harts.iter().filter(|h| h.hartid != hartid).count() == 1;
-    for &Hart { hartid, plic_context } in machine.harts.iter().filter(|h| h.hartid != hartid) {
+    let mut guest_harts = machine.harts.clone();
+    let single_hart = guest_harts.len() == 1;
+    if !single_hart {
+        guest_harts.retain(|h| h.hartid != hartid);
+    }
+    let single_guest = guest_harts.len() == 1;
+    assert!(guest_harts.len() != 0);
 
+    let mut guestid = 1;
+    for hart in guest_harts {
         let hart_base_pa = machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE * guestid;
 
         let mut irq_mask = 0;
@@ -77,8 +84,8 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
             }
         }
 
-        *(pa2va(machine.plic_address + 0x200000 + 0x1000 * plic_context) as *mut u32) = 0;
-        *(pa2va(machine.plic_address + 0x2000 + 0x80 * plic_context) as *mut u32) = irq_mask;
+        *(pa2va(machine.plic_address + 0x200000 + 0x1000 * hart.plic_context) as *mut u32) = 0;
+        *(pa2va(machine.plic_address + 0x2000 + 0x80 * hart.plic_context) as *mut u32) = irq_mask;
 
         (*(pa2va(hart_base_pa) as *mut pmap::BootPageTable)).init();
         core::ptr::copy(pa2va(device_tree_blob) as *const u8,
@@ -88,20 +95,33 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
                         pa2va(hart_base_pa + pmap::HEAP_OFFSET) as *mut u8,
                         (machine.initrd_end - machine.initrd_start) as usize);
 
-        // Send IPI
-        *SHARED_STATICS.ipi_reason_array[hartid as usize].lock() = Some(IpiReason::EnterSupervisor {
-            a0: hartid,
+        let reason = IpiReason::EnterSupervisor {
+            a0: hart.hartid,
             a1: hart_base_pa + 4096,
             a2: hart_base_pa,
             a3: if !single_guest { guestid as u64 } else { u64::max_value() },
             sp: hart_base_pa + (4<<20) + pmap::DIRECT_MAP_OFFSET,
             satp: 8 << 60 | (hart_base_pa >> 12),
             mepc: hart_entry as u64,
-        });
-        *(pa2va(machine.clint_address + hartid*4) as *mut u32) = 1;
+        };
+
+        if single_hart {
+            match reason {
+                IpiReason::EnterSupervisor { a0, a1, a2, a3, sp, satp, mepc: _ } => {
+                    csrw!(satp, satp);
+                    asm!("mv sp, $0" :: "r"(sp) :: "volatile");
+                    hart_entry(a0, a1, a2, a3);
+                }
+            }
+        } else {
+            // Send IPI
+            *SHARED_STATICS.ipi_reason_array[hart.hartid as usize].lock() = Some(reason);
+            *(pa2va(machine.clint_address + hart.hartid*4) as *mut u32) = 1;
+        }
 
         guestid += 1;
     }
+
     loop {}
 }
 
