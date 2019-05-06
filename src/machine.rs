@@ -65,8 +65,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mcounteren, 0xffffffff);
     csrw!(mscratch, M_MODE_STACK_BASE + M_MODE_STACK_STRIDE * hartid);
 
-    csrw!(pmpaddr7, 0xffffffff_ffffffff);
-    csrs!(pmpcfg0, 0x1f << 56);
+    pmp::install_pmp_allmem(7, pmp::READ | pmp::WRITE | pmp::EXEC);
 
     if SHARED_STATICS.hart_lottery.swap(false,  Ordering::SeqCst) {
         asm!("LOAD_ADDRESS t0, mtrap_entry

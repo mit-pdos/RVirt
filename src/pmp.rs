@@ -75,10 +75,9 @@ pub unsafe fn write_pmp_address(entry: u8, address: u64) {
 
 // note: these updates are not atomic. don't let interrupts happen during them!
 pub unsafe fn install_pmp(entry: u8, config: u8, address: u64) {
+    machine_debug_assert((read_pmp_config(entry) & LOCK) == 0, "attempt to modify locked PMP entry");
     write_pmp_address(entry, address);
-    machine_debug_assert(read_pmp_address(entry) == address, "could not change PMP address entry");
     write_pmp_config(entry, config);
-    machine_debug_assert(read_pmp_config(entry) == config, "could not change PMP config entry");
 }
 
 pub unsafe fn install_pmp_napot(entry: u8, config: u8, address: u64, size: u64) {
@@ -101,6 +100,13 @@ pub unsafe fn install_pmp_napot(entry: u8, config: u8, address: u64, size: u64) 
     }
 }
 
+// cover everything in memory
+pub unsafe fn install_pmp_allmem(entry: u8, config: u8) {
+    // 0xFFFFFFFFFFFFFFFF is reserved as of priv-1.10, but fixed in an unreleased spec, and QEMU
+    // interprets it correctly, so we're just going to go with it.
+    install_pmp(entry, config | MODE_NAPOT, 0xFFFFFFFF_FFFFFFFF);
+}
+
 // returns (bits, remaining).
 fn extract_napot_bits(address: u64) -> (u8, u64) {
     let mut bits = 0;
@@ -120,8 +126,13 @@ pub fn decode_pmp_range(config: u8, address: u64, _lastconfig: u8, lastaddress: 
         PMP_A_TOR => (lastaddress << 2, address << 2),
         PMP_A_NA4 => (address << 2, (address << 2) + 4),
         PMP_A_NAPOT => {
-            let (bits, address) = extract_napot_bits(address);
-            (address << 2, (address << 2) + (8 << bits))
+            if address == 0xFFFFFFFF_FFFFFFFF {
+                // covers everything, both per latest unreleased spec and QEMU interpretation
+                (0, 0)
+            } else {
+                let (bits, address) = extract_napot_bits(address);
+                (address << 2, (address << 2) + (8 << bits))
+            }
         }
         _ => unreachable!()
     }
