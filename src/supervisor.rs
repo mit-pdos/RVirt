@@ -30,7 +30,7 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     }) as fn() as *const () as u64);
 
     // Read and process host FDT.
-    let fdt = Fdt::new(device_tree_blob);
+    let mut fdt = Fdt::new(device_tree_blob);
     assert!(fdt.magic_valid());
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
     assert!(fdt.total_size() < 64 * 1024);
@@ -140,7 +140,7 @@ unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, hart_base_pa: u64, gues
     };
 
     // Read and process host FDT.
-    let fdt = Fdt::new(pa2va(device_tree_blob));
+    let mut fdt = Fdt::new(pa2va(device_tree_blob));
     assert!(fdt.magic_valid());
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
     let machine = fdt.parse();
@@ -161,7 +161,7 @@ unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, hart_base_pa: u64, gues
         core::ptr::copy(pa2va(device_tree_blob) as *const u8,
                         guest_dtb as *mut u8,
                         fdt.total_size() as usize);
-        let guest_fdt = Fdt::new(guest_dtb);
+        let mut guest_fdt = Fdt::new(guest_dtb);
         guest_fdt.mask(guest_memory.len());
         guest_fdt.parse()
     });
