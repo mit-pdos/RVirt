@@ -19,7 +19,7 @@
 // S-mode and loops for all other interrupt and exception causes.
 .align 4
 mtrap_entry:
-	csrrw sp, 0x340, sp // mscratch
+	csrrw sp, mscratch, sp
 	addi sp, sp, -128
 	sd ra, 0(sp)
 	sd t0, 8(sp)
@@ -38,7 +38,7 @@ mtrap_entry:
 	sd a6, 112(sp)
 	sd a7, 120(sp)
 
-	csrr t0, 0x342 // mcause
+	csrr t0, mcause
 	bgez t0, exception
 
 	li t1, 0x8000000000000003
@@ -106,18 +106,16 @@ return:
 // installs a new trap handler and then calls into the S-mode hypervisor code.
 .align 4
 start_hart:
-	csrr t0, 0x342 // mcause
+	csrr t0, mcause
 	li t1, 0x8000000000000003
 	bne t0, t1, unknown_cause
 
 	// Install new mtvec
 	LOAD_ADDRESS t0, mtrap_entry
-    csrw 0x305, t0
-
-	// Load mhartid into a0
-	csrr a0, 0xf14
+	csrw mtvec, t0
 
 	// Set msip = 0
+	csrr a0, mhartid
 	li t0, 0x02000000
 	slli t1, a0, 2
 	add t0, t0, t1
@@ -125,6 +123,6 @@ start_hart:
 
 	// Set mstatus.mpp[1] = 0
 	li t0, 0x1000
-	csrc 0x300, t0
+	csrc mstatus, t0
 
 	call handle_ipi

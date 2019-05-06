@@ -69,7 +69,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
 
     if SHARED_STATICS.hart_lottery.swap(false,  Ordering::SeqCst) {
         asm!("LOAD_ADDRESS t0, mtrap_entry
-              csrw 0x305, t0 // mtvec"
+              csrw mtvec, t0"
              ::: "t0"  : "volatile");
 
         print::early_guess_uart();
@@ -108,7 +108,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
               mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1", "gp", "tp" : "volatile");
     } else  {
         asm!("LOAD_ADDRESS t0, start_hart
-             csrw 0x305, t0 // mtvec"
+             csrw mtvec, t0"
              ::: "t0"  : "volatile");
         csrsi!(mstatus, 0x8); //MIE
         loop {}

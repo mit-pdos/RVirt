@@ -21,7 +21,7 @@ pub unsafe fn pmptest_mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mscratch, 0x80800000 + 0x1000 * (hartid+1));
 
     asm!("LOAD_ADDRESS t0, mtrap_entry
-          csrw 0x305, t0 // mtvec"
+          csrw mtvec, t0"
          ::: "t0"  : "volatile");
 
     // Minimal page table to boot into S mode.

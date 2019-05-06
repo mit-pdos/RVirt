@@ -112,7 +112,7 @@ impl U64Bits for u64 {
 #[no_mangle]
 pub unsafe fn strap_entry() -> ! {
     asm!(".align 4
-          csrw 0x140, sp      // Save stack pointer in sscratch
+          csrw sscratch, sp   // Save stack pointer in sscratch
           li sp, $0           // Set stack pointer
 
           // Save registers
@@ -183,7 +183,7 @@ pub unsafe fn strap_entry() -> ! {
           ld t6, 31*8(sp)
 
           // Restore stack pointer and return
-          csrr sp, 0x140
+          csrr sp, sscratch
           sret" :: "i"(SSTACK_BASE) : "memory" : "volatile");
 
     unreachable!()
