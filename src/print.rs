@@ -199,3 +199,20 @@ pub fn guest_println(guestid: u64, line: &[u8]) {
 pub fn mwriter<'a>() -> Option<MutexGuard<'a, UartWriter>> {
     SHARED_STATICS.uart_writer.try_lock()
 }
+
+const QEMU_VENDOR_ID: u64 = 0x00000000;
+
+// guess whether we're likely a SiFive board or a QEMU board, for the sake of having early-boot
+// uart detection work correctly.
+pub fn early_guess_uart() {
+    if csrr!(mvendorid) == QEMU_VENDOR_ID {
+        let mut writer = SHARED_STATICS.uart_writer.lock();
+        *writer = UartWriter {
+            pa: 0x10000000,
+            va: None,
+            inner: UartWriterInner::Ns16550a { initialized: false },
+        }
+    } else {
+        // probably SiFive; just use the value already configured.
+    }
+}

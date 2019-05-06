@@ -55,6 +55,7 @@ const MR: Mutex<Option<IpiReason>> = Mutex::new(None);
 /// addresses.
 #[link_section = ".shared.data"]
 pub static __SHARED_STATICS_IMPL: Shared = Shared {
+    // see also: print::early_guess_uart
     uart_writer: Mutex::new(UartWriter {
         pa: 0x10010000,
         va: None,

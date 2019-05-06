@@ -73,6 +73,8 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
               csrw 0x305, t0 // mtvec"
              ::: "t0"  : "volatile");
 
+        print::early_guess_uart();
+
         // Text segment
         pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
         // Shared data segment
