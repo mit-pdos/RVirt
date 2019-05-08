@@ -67,8 +67,14 @@ pub fn handle_page_fault(state: &mut Context, cause: u64, instruction: Option<u3
                 return virtio::handle_queue_access(state, guest_pa, host_pa, instruction);
             }
 
+            let reserved_bits = match translation.level {
+                PageTableLevel::Level4KB => 0x000,
+                PageTableLevel::Level2MB => 0x100,
+                PageTableLevel::Level1GB => 0x200,
+            };
+
             state.shadow_page_tables.set_mapping(
-                shadow, page, (host_pa >> 2) | perm | PTE_AD | PTE_USER | PTE_VALID);
+                shadow, page, (host_pa >> 2) | reserved_bits | perm | PTE_AD | PTE_USER | PTE_VALID);
             riscv::sfence_vma_addr(guest_va);
             return true;
         } else if access != PTE_EXECUTE && state.smode {

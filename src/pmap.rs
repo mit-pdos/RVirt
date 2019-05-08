@@ -182,6 +182,9 @@ impl PageTables {
         page_table + ((va >> 12) & 0x1ff) * 8
     }
 
+    pub fn clear_page_table(&mut self, pa: u64) {
+        self.clear_page_table_range(pa, 0, 512);
+    }
     pub fn clear_page_table_range(&mut self, pa: u64, start_index: u64, end_index: u64) {
         assert!(start_index <= end_index);
         assert!(end_index <= 512);
@@ -190,7 +193,7 @@ impl PageTables {
             let pte = self.region[pa + i * 8];
             if pte & PTE_RWXV == PTE_VALID {
                 let page = (pte >> 10) << 12;
-                self.clear_page_table_range(page, 0, 512);
+                self.clear_page_table(page);
                 self.free_page(page);
             }
             self.region.set_invalid_pte(pa + i * 8, 0);
@@ -234,11 +237,11 @@ pub fn is_sv39(va: u64) -> bool {
     shifted == 0 || shifted == 0x3ffffff
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PageTableLevel {
     Level4KB,
     Level2MB,
     Level1GB,
-    Level512GB,
 }
 
 pub struct AddressTranslation {
@@ -438,9 +441,18 @@ pub fn handle_sfence_vma(state: &mut Context, instruction: RType) {
         if va < DIRECT_MAP_OFFSET {
             for &root in &[UVA, KVA, MVA] {
                 let pte_addr = state.shadow_page_tables.pte_for_addr(root, va);
-                state.shadow_page_tables.region.set_invalid_pte(pte_addr, 0);
+
+                match (state.shadow_page_tables.region[pte_addr] >> 8) & 0x3 {
+                    0 => state.shadow_page_tables.region.set_invalid_pte(pte_addr, 0),
+                    1 => for i in 0..512 {
+                        state.shadow_page_tables.region.set_invalid_pte(
+                            (pte_addr & !(PAGE_SIZE - 1)) + i * 8, 0)
+                    }
+                    _ => state.shadow_page_tables.clear_page_table_range(
+                        state.shadow_page_tables.root_pa(root), 0, DIRECT_MAP_PT_INDEX/8),
+                }
             }
-            riscv::sfence_vma();
+            riscv::sfence_vma_addr(va);
         }
     }
 }
