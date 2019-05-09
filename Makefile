@@ -1,7 +1,9 @@
 LD=riscv64-unknown-elf-ld
 
+GUEST_KERNEL_FEATURE=$(if $(RVIRT_GUEST_KERNEL), --features embed_guest_kernel, )
+
 release: src/*.rs src/*.S Cargo.toml src/linker.ld
-	cargo rustc --release --target riscv64imac-unknown-none-elf --bin rvirt-supervisor -- -C link-arg=-Tsrc/slinker.ld  -C linker=$(LD)
+	cargo rustc --release --target riscv64imac-unknown-none-elf --bin rvirt-supervisor $(GUEST_KERNEL_FEATURE) -- -C link-arg=-Tsrc/slinker.ld  -C linker=$(LD)
 	cargo rustc --release --target riscv64imac-unknown-none-elf --bin rvirt-machine --features "physical_symbol_addresses" -- -C link-arg=-Tsrc/mlinker.ld  -C linker=$(LD)
 	$(LD) -Tsrc/linker.ld target/riscv64imac-unknown-none-elf/release/rvirt-supervisor target/riscv64imac-unknown-none-elf/release/rvirt-machine -o target/riscv64imac-unknown-none-elf/release/rvirt
 

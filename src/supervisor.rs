@@ -1,5 +1,7 @@
 #![no_std]
 #![feature(asm)]
+#![feature(const_fn)]
+#![feature(const_slice_len)]
 #![feature(const_str_len)]
 #![feature(global_asm)]
 #![feature(lang_items)]
@@ -19,6 +21,15 @@ use rvirt::*;
 #[no_mangle] fn abort() -> ! { println!("Abort!"); loop {}}
 
 static GUEST_DTB: &'static [u8] = include_bytes!("guest.dtb");
+
+#[link_section = ".initrd"]
+#[cfg(feature = "embed_guest_kernel")]
+static GUEST_KERNEL: [u8; include_bytes!(env!("RVIRT_GUEST_KERNEL")).len()] =
+    *include_bytes!(env!("RVIRT_GUEST_KERNEL"));
+
+#[cfg(not(feature = "embed_guest_kernel"))]
+static GUEST_KERNEL: [u8; 0] = [];
+
 
 #[no_mangle]
 #[link_section = ".text.entrypoint"]
@@ -48,8 +59,8 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     assert!(machine.initrd_end <= machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE);
     assert!(machine.initrd_end - machine.initrd_start <= pmap::HEAP_SIZE);
     assert!(machine.harts.iter().any(|h| h.hartid == hartid));
-    if machine.initrd_end == 0 {
-        println!("WARN: No guest kernel provided. Make sure to pass one with `-initrd ...`");
+    if !cfg!(feature = "embed_guest_kernel") && machine.initrd_end == 0 {
+        println!("WARN: No guest kernel provided. Make sure to pass one with `-initrd or compile with --features embed_guest_kernel`");
     }
 
     // Do not allow the __SHARED_STATICS_IMPL symbol to be optimized out.
@@ -94,9 +105,15 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
         core::ptr::copy(pa2va(device_tree_blob) as *const u8,
                         pa2va(hart_base_pa + 4096) as *mut u8,
                         fdt.total_size() as usize);
-        core::ptr::copy(pa2va(machine.initrd_start) as *const u8,
-                        pa2va(hart_base_pa + pmap::HEAP_OFFSET) as *mut u8,
-                        (machine.initrd_end - machine.initrd_start) as usize);
+        if machine.initrd_start == machine.initrd_end {
+            core::ptr::copy(&GUEST_KERNEL as *const _ as *const u8,
+                            pa2va(hart_base_pa + pmap::HEAP_OFFSET) as *mut u8,
+                            GUEST_KERNEL.len());
+        } else {
+            core::ptr::copy(pa2va(machine.initrd_start) as *const u8,
+                            pa2va(hart_base_pa + pmap::HEAP_OFFSET) as *mut u8,
+                            (machine.initrd_end - machine.initrd_start) as usize);
+        }
 
         let reason = IpiReason::EnterSupervisor {
             a0: hart.hartid,

@@ -43,4 +43,10 @@ SECTIONS
   }
 
   ASSERT(. < 0xffffffffc0600000, "")
+
+  . = 0xffffffffe0000000;
+  .initrd :
+  {
+  	*(.initrd)
+  }
 }

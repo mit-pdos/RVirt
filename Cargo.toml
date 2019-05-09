@@ -25,3 +25,4 @@ path = "src/supervisor.rs"
 
 [features]
 physical_symbol_addresses = []
+embed_guest_kernel = []
