@@ -58,13 +58,17 @@ pub struct HostPlic {
     pub claim_clear: MemoryRegion<u32>,
 }
 
+pub struct SavedRegisters {
+    registers: MemoryRegion,
+}
+
 pub struct Context {
     pub csrs: ControlRegisters,
     pub plic: PlicState,
     pub uart: Uart,
     pub virtio: VirtIO,
 
-    pub saved_registers: MemoryRegion,
+    pub saved_registers: SavedRegisters,
     pub guest_memory: MemoryRegion,
     pub shadow_page_tables: PageTables,
 
@@ -277,6 +281,25 @@ impl HostPlic {
     }
 }
 
+impl SavedRegisters {
+    pub fn get(&self, reg: u32) -> u64 {
+        match reg {
+            0 => 0,
+            1 | 3..=31 => self.registers[reg as u64 * 8],
+            2 => csrr!(sscratch),
+            _ => unreachable!(),
+        }
+    }
+    pub fn set(&mut self, reg: u32, value: u64) {
+        match reg {
+            0 => {},
+            1 | 3..=31 => self.registers[reg as u64 * 8] = value,
+            2 => riscv::set_sscratch(value),
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl Context {
     pub fn get_csr(&mut self, csr: u32) -> Option<u64> {
         Some(match csr as u64 {
@@ -403,6 +426,8 @@ pub unsafe fn initialize(machine: &MachineMeta,
             }
             assert_eq!(irq_map[host_irq as usize], 0);
             irq_map[host_irq as usize] = guest_irq.unwrap() as u16;
+        } else {
+            virtio_devices.push(virtio::Device::Unmapped);
         }
     }
 
@@ -426,7 +451,9 @@ pub unsafe fn initialize(machine: &MachineMeta,
 
             mtimecmp: u64::max_value(),
         },
-        saved_registers: MemoryRegion::with_base_address(SSTACK_BASE, 0, 32 * 8),
+        saved_registers: SavedRegisters {
+            registers: MemoryRegion::with_base_address(SSTACK_BASE, 0, 32 * 8)
+        },
         guest_memory,
         shadow_page_tables,
         plic: PlicState::new(),

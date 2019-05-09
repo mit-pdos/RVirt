@@ -476,20 +476,10 @@ fn forward_exception(state: &mut Context, cause: u64, sepc: u64) {
 }
 
 pub fn set_register(state: &mut Context, reg: u32, value: u64) {
-    match reg {
-        0 => {},
-        1 | 3..=31 => state.saved_registers[reg as u64 * 8] = value,
-        2 => riscv::set_sscratch(value),
-        _ => unreachable!(),
-    }
+    state.saved_registers.set(reg, value);
 }
 pub fn get_register(state: &mut Context, reg: u32) -> u64 {
-    match reg {
-        0 => 0,
-        1 | 3..=31 => state.saved_registers[reg as u64 * 8],
-        2 => csrr!(sscratch),
-        _ => unreachable!(),
-    }
+    state.saved_registers.get(reg)
 }
 
 pub unsafe fn load_instruction_at_address(_state: &mut Context, guest_va: u64) -> (u32, u64) {
