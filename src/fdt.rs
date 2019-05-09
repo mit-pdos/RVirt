@@ -59,6 +59,8 @@ pub struct MachineMeta {
 
     pub virtio: ArrayVec<[Device; 16]>,
 
+    pub bootargs: ArrayString<[u8; 256]>,
+
     pub initrd_start: u64,
     pub initrd_end: u64,
 }
@@ -193,6 +195,7 @@ impl<'a> Fdt<'a> {
                 FdtVisit::Property { name, prop } => match (path, name) {
                     ("/chosen", "linux,initrd-end") => initrd_end = Some(prop.read_int()),
                     ("/chosen", "linux,initrd-start") => initrd_start = Some(prop.read_int()),
+                    ("/chosen", "bootargs") => meta.bootargs.push_str(prop.value_str().unwrap()),
                     ("/memory", "reg") => {
                         let region = prop.read_range();
                         meta.physical_memory_offset = region.0;
@@ -279,11 +282,17 @@ impl<'a> Fdt<'a> {
         meta
     }
 
-    pub fn mask(&mut self, guest_memory_size: u64) {
+    pub fn initialize_guest(&mut self, guest_memory_size: u64, bootargs: &str) {
         self.walk(|path, unit_addresses, v| match v {
             FdtVisit::Property { name, prop } => match (path, name) {
-                ("/chosen", "linux,initrd-end") => prop.mask(),
-                ("/chosen", "linux,initrd-start") => prop.mask(),
+                ("/chosen", "bootargs") => {
+                    let s = prop.value_slice();
+                    assert!(s.len() >= bootargs.len());
+
+                    for i in 0..bootargs.len() {
+                        s[i] = bootargs.as_bytes()[i];
+                    }
+                }
                 ("/memory", "reg") => {
                     let region = prop.read_range();
                     let mut new_region = [0; 16];
@@ -293,16 +302,7 @@ impl<'a> Fdt<'a> {
                 }
                 _ => {},
             }
-            FdtVisit::Node { mask } => *mask = match path {
-                "/cpus/cpu" => (unit_addresses[2].is_some() && unit_addresses[2] != Some(0)),
-                "/soc/pci" => true,
-                "/test" => true,
-                "/virtio_mmio" if unit_addresses[1] == Some(0x10005000) => true,
-                "/virtio_mmio" if unit_addresses[1] == Some(0x10006000) => true,
-                "/virtio_mmio" if unit_addresses[1] == Some(0x10007000) => true,
-                "/virtio_mmio" if unit_addresses[1] == Some(0x10008000) => true,
-                _ => false,
-            },
+            FdtVisit::Node { .. } => {}
         });
     }
 
@@ -438,7 +438,7 @@ impl<'a> Property<'a> {
             BigEndian::write_u32(&mut self.0[i..], FDT_NOP);
         }
     }
-    pub fn value_str(&self) -> Option<&str> {
+    pub fn value_str(&mut self) -> Option<&str> {
         if self.len() == 0 { return Some(""); }
 
         for i in 0..(self.len() - 1) {
@@ -448,6 +448,9 @@ impl<'a> Property<'a> {
             }
         }
         Some(core::str::from_utf8(&self.0[12..][..(self.len() - 1)]).unwrap())
+    }
+    pub fn value_slice(&mut self) -> &mut [u8] {
+        &mut self.0[12..]
     }
 
     pub fn cells(&self) -> usize {

@@ -18,6 +18,8 @@ use rvirt::*;
 #[start] fn start(_argc: isize, _argv: *const *const u8) -> isize {0}
 #[no_mangle] fn abort() -> ! { println!("Abort!"); loop {}}
 
+static GUEST_DTB: &'static [u8] = include_bytes!("guest.dtb");
+
 #[no_mangle]
 #[link_section = ".text.entrypoint"]
 unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
@@ -158,11 +160,11 @@ unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, hart_base_pa: u64, gues
 
     // Load guest FDT.
     let guest_machine = sum::access_user_memory(||{
-        core::ptr::copy(pa2va(device_tree_blob) as *const u8,
+        core::ptr::copy(GUEST_DTB.as_ptr(),
                         guest_dtb as *mut u8,
-                        fdt.total_size() as usize);
+                        GUEST_DTB.len());
         let mut guest_fdt = Fdt::new(guest_dtb);
-        guest_fdt.mask(guest_memory.len());
+        guest_fdt.initialize_guest(guest_memory.len(), &machine.bootargs);
         guest_fdt.parse()
     });
 
