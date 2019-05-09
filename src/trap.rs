@@ -203,13 +203,13 @@ pub fn strap() {
         // No other threads could be accessing CONTEXT here, and even if we interrupted a critical
         // section, we're about to crash anyway so it doesn't matter that much.
         unsafe { CONTEXT.force_unlock() }
-        let mut state = CONTEXT.lock();
-        let mut state = (&mut *state).as_mut().unwrap();
+        let state = CONTEXT.lock();
+        let state = (&*state).as_ref().unwrap();
 
-        println!("reg ra = {:#x}", get_register(&mut state, 1));
-        println!("reg sp = {:#x}", get_register(&mut state, 2));
+        println!("reg ra = {:#x}", state.saved_registers.get(1));
+        println!("reg sp = {:#x}", state.saved_registers.get(2));
         for i in 3..32 {
-            println!("reg x{} = {:#x}", i, get_register(&mut state, i));
+            println!("reg x{} = {:#x}", i, state.saved_registers.get(i));
         }
 
         loop {}
@@ -262,41 +262,41 @@ pub fn strap() {
             }
             Some(Instruction::SfenceVma(rtype)) => pmap::handle_sfence_vma(&mut state, rtype),
             Some(Instruction::Csrrw(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                let value = get_register(state, i.rs1());
+                let value = state.saved_registers.get(i.rs1());
                 state.set_csr(i.csr(), value);
-                set_register(state, i.rd(), prev);
+                state.saved_registers.set(i.rd(), prev);
             }
             Some(Instruction::Csrrs(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                let mask = get_register(state, i.rs1());
+                let mask = state.saved_registers.get(i.rs1());
                 if mask != 0 {
                     state.set_csr(i.csr(), prev | mask);
                 }
-                set_register(state, i.rd(), prev);
+                state.saved_registers.set(i.rd(), prev);
             }
             Some(Instruction::Csrrc(i)) => if let Some(prev) = state.get_csr(i.csr()) {
-                let mask = get_register(state, i.rs1());
+                let mask = state.saved_registers.get(i.rs1());
                 if mask != 0 {
                     state.set_csr(i.csr(), prev & !mask);
                 }
-                set_register(state, i.rd(), prev);
+                state.saved_registers.set(i.rd(), prev);
             }
             Some(Instruction::Csrrwi(i)) => if let Some(prev) = state.get_csr(i.csr()) {
                 state.set_csr(i.csr(), i.zimm() as u64);
-                set_register(state, i.rd(), prev);
+                state.saved_registers.set(i.rd(), prev);
             }
             Some(Instruction::Csrrsi(i)) => if let Some(prev) = state.get_csr(i.csr()) {
                 let mask = i.zimm() as u64;
                 if mask != 0 {
                     state.set_csr(i.csr(), prev | mask);
                 }
-                set_register(state, i.rd(), prev);
+                state.saved_registers.set(i.rd(), prev);
             }
             Some(Instruction::Csrrci(i)) => if let Some(prev) = state.get_csr(i.csr()) {
                 let mask = i.zimm() as u64;
                 if mask != 0 {
                     state.set_csr(i.csr(), prev & !mask);
                 }
-                set_register(state, i.rd(), prev);
+                state.saved_registers.set(i.rd(), prev);
             }
             Some(Instruction::Wfi) => riscv::wfi(),
             Some(decoded) => {
@@ -316,14 +316,14 @@ pub fn strap() {
         }
         maybe_forward_interrupt(&mut state, csrr!(sepc));
     } else if cause == SCAUSE_ENV_CALL && state.smode {
-        match get_register(state, 17) {
+        match state.saved_registers.get(17) {
             0 => {
                 state.csrs.sip.set(IP_STIP, false);
-                state.csrs.mtimecmp = get_register(state, 10);
+                state.csrs.mtimecmp = state.saved_registers.get(10);
                 state.host_clint.set_mtimecmp(state.csrs.mtimecmp);
             }
             1 => {
-                let value = get_register(state, 10) as u8;
+                let value = state.saved_registers.get(10) as u8;
                 state.uart.output_byte(value)
             }
             5 => riscv::fence_i(),
@@ -344,14 +344,14 @@ pub fn strap() {
             println!("Forward exception (cause = {}, smode={})!", cause, state.smode);
         } else {
             // println!("system call: {}({:#x}, {:#x}, {:#x}, {:#x})",
-            //          syscall_name(get_register(state, 17)),
-            //          get_register(state, 10), get_register(state, 11),
-            //          get_register(state, 12), get_register(state, 13)
+            //          syscall_name(state.saved_registers.get(17)),
+            //          state.saved_registers.get(10), state.saved_registers.get(11),
+            //          state.saved_registers.get(12), state.saved_registers.get(13)
             // );
-            // if syscall_name(get_register(state, 17)) == "write" {
-            //     let fd = get_register(state, 10);
-            //     let ptr = get_register(state, 11);
-            //     let len = get_register(state, 12);
+            // if syscall_name(state.saved_registers.get(17)) == "write" {
+            //     let fd = state.saved_registers.get(10);
+            //     let ptr = state.saved_registers.get(11);
+            //     let len = state.saved_registers.get(12);
             //     if fd == 1 {
             //         print!("data = ");
             //         for i in 0..len {
@@ -473,13 +473,6 @@ fn forward_exception(state: &mut Context, cause: u64, sepc: u64) {
     state.csrs.stval = csrr!(stval);
     state.smode = true;
     riscv::set_sepc(state.csrs.stvec & TVEC_BASE);
-}
-
-pub fn set_register(state: &mut Context, reg: u32, value: u64) {
-    state.saved_registers.set(reg, value);
-}
-pub fn get_register(state: &mut Context, reg: u32) -> u64 {
-    state.saved_registers.get(reg)
 }
 
 pub unsafe fn load_instruction_at_address(_state: &mut Context, guest_va: u64) -> (u32, u64) {

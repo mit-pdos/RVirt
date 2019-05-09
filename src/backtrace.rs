@@ -6,9 +6,9 @@ use crate::{pmap, trap};
 pub unsafe fn print_guest_backtrace(guest_memory: &MemoryRegion, state: &mut Context, pc: u64) {
     println!(" {:x}", pc);
 
-    let mut ra = trap::get_register(state, 1);
-    let mut sp = trap::get_register(state, 2);
-    let mut fp = trap::get_register(state, 8);
+    let mut ra = state.saved_registers.get(1);
+    let mut sp = state.saved_registers.get(2);
+    let mut fp = state.saved_registers.get(8);
 
     let page_table_ppn = state.csrs.satp & trap::constants::SATP_PPN;
 

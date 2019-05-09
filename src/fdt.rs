@@ -467,7 +467,7 @@ impl<'a> Property<'a> {
 }
 
 enum FdtVisit<'a> {
-    Node { mask: &'a mut bool },
+    Node { #[allow(unused)] mask: &'a mut bool },
     Property {
         name: &'a str,
         prop: &'a mut Property<'a>,

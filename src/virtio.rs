@@ -2,7 +2,7 @@ use byteorder::{NativeEndian, ByteOrder};
 use riscv_decode::Instruction;
 use crate::context::Context;
 use crate::memory_region::MemoryRegion;
-use crate::{pmap, riscv, trap};
+use crate::{pmap, riscv};
 
 pub const MAX_QUEUES: usize = 4;
 pub const MAX_DEVICES: usize = 4;
@@ -111,8 +111,8 @@ pub fn handle_device_access(state: &mut Context, guest_pa: u64, instruction: u32
         }
         Device::Unmapped => {
             match riscv_decode::decode(instruction).ok() {
-                Some(Instruction::Lw(i)) => trap::set_register(state, i.rd(), 0),
-                Some(Instruction::Lb(i)) => trap::set_register(state, i.rd(), 0),
+                Some(Instruction::Lw(i)) => state.saved_registers.set(i.rd(), 0),
+                Some(Instruction::Lb(i)) => state.saved_registers.set(i.rd(), 0),
                 Some(Instruction::Sw(_)) => {}
                 Some(instr) => {
                     println!("VIRTIO: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, csrr!(sepc));
@@ -160,10 +160,10 @@ pub fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u64, ins
     if hit_queue {
         match decoded.unwrap() {
             Instruction::Ld(i) => {
-                trap::set_register(state, i.rd(), state.guest_memory[guest_pa].wrapping_sub(state.guest_shift));
+                state.saved_registers.set(i.rd(), state.guest_memory[guest_pa].wrapping_sub(state.guest_shift));
             }
             Instruction::Sd(i) => {
-                let value = trap::get_register(state, i.rs2());
+                let value = state.saved_registers.get(i.rs2());
                 if value == 0 {
                     state.guest_memory[guest_pa] = 0;
                 } else if state.guest_memory.in_region(value) {
@@ -183,24 +183,24 @@ pub fn handle_queue_access(state: &mut Context, guest_pa: u64, host_pa: u64, ins
         let offset = (guest_pa % 8) as usize;
         let mut current = state.guest_memory[index].to_ne_bytes();
         match decoded.as_ref().unwrap() {
-            Instruction::Ld(i) => trap::set_register(state, i.rd(), u64::from_ne_bytes(current)),
-            Instruction::Lwu(i) => trap::set_register(state, i.rd(), NativeEndian::read_u32(&current[offset..]) as u64),
-            Instruction::Lhu(i) => trap::set_register(state, i.rd(), NativeEndian::read_u16(&current[offset..]) as u64),
-            Instruction::Lbu(i) => trap::set_register(state, i.rd(), current[offset] as u64),
-            Instruction::Lw(i) => trap::set_register(state, i.rd(), NativeEndian::read_i32(&current[offset..]) as i64 as u64),
-            Instruction::Lh(i) => trap::set_register(state, i.rd(), NativeEndian::read_i16(&current[offset..]) as i64 as u64),
-            Instruction::Lb(i) => trap::set_register(state, i.rd(), current[offset] as i8 as i64 as u64),
-            Instruction::Sd(i) => state.guest_memory[index] = trap::get_register(state, i.rs2()),
+            Instruction::Ld(i) => state.saved_registers.set(i.rd(), u64::from_ne_bytes(current)),
+            Instruction::Lwu(i) => state.saved_registers.set(i.rd(), NativeEndian::read_u32(&current[offset..]) as u64),
+            Instruction::Lhu(i) => state.saved_registers.set(i.rd(), NativeEndian::read_u16(&current[offset..]) as u64),
+            Instruction::Lbu(i) => state.saved_registers.set(i.rd(), current[offset] as u64),
+            Instruction::Lw(i) => state.saved_registers.set(i.rd(), NativeEndian::read_i32(&current[offset..]) as i64 as u64),
+            Instruction::Lh(i) => state.saved_registers.set(i.rd(), NativeEndian::read_i16(&current[offset..]) as i64 as u64),
+            Instruction::Lb(i) => state.saved_registers.set(i.rd(), current[offset] as i8 as i64 as u64),
+            Instruction::Sd(i) => state.guest_memory[index] = state.saved_registers.get(i.rs2()),
             Instruction::Sw(i) => {
-                NativeEndian::write_u32(&mut current[offset..], trap::get_register(state, i.rs2()) as u32);
+                NativeEndian::write_u32(&mut current[offset..], state.saved_registers.get(i.rs2()) as u32);
                 state.guest_memory[index] = u64::from_ne_bytes(current);
             }
             Instruction::Sh(i) => {
-                NativeEndian::write_u16(&mut current[offset..], trap::get_register(state, i.rs2()) as u16);
+                NativeEndian::write_u16(&mut current[offset..], state.saved_registers.get(i.rs2()) as u16);
                 state.guest_memory[index] = u64::from_ne_bytes(current);
             }
             Instruction::Sb(i) => {
-                current[offset] = trap::get_register(state, i.rs2()) as u8;
+                current[offset] = state.saved_registers.get(i.rs2()) as u8;
                 state.guest_memory[index] = u64::from_ne_bytes(current);
             }
             instr => {

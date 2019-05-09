@@ -1,5 +1,5 @@
 use crate::context::Context;
-use crate::trap::{self, constants::SATP_PPN};
+use crate::trap::constants::SATP_PPN;
 use crate::{pmap::*, riscv, virtio};
 use riscv_decode::Instruction;
 
@@ -106,10 +106,10 @@ fn handle_uart_access(state: &mut Context, guest_pa: u64, instruction: u32) -> b
     match riscv_decode::decode(instruction).ok() {
         Some(Instruction::Lb(i)) => {
             let value = state.uart.read(&state.host_clint, guest_pa) as u64;
-            trap::set_register(state, i.rd(), value);
+            state.saved_registers.set(i.rd(), value);
         }
         Some(Instruction::Sb(i)) => {
-            let value = (trap::get_register(state, i.rs2()) & 0xff) as u8;
+            let value = (state.saved_registers.get(i.rs2()) & 0xff) as u8;
             state.uart.write(&state.host_clint, guest_pa, value);
         }
         Some(instr) => {
@@ -131,10 +131,10 @@ fn handle_plic_access(state: &mut Context, guest_pa: u64, instruction: u32) -> b
         Some(Instruction::Lw(i)) => {
             let value = state.plic.read_u32(guest_pa) as i32 as i64 as u64;
             // println!("PLIC: Read value {:#x} at address {:#x}", value, guest_pa);
-            trap::set_register(state, i.rd(), value)
+            state.saved_registers.set(i.rd(), value)
         }
         Some(Instruction::Sw(i)) => {
-            let value = trap::get_register(state, i.rs2()) as u32;
+            let value = state.saved_registers.get(i.rs2()) as u32;
             // println!("PLIC: Writing {:#x} to address {:#x}", value, guest_pa);
 
             let mut clear_seip = false;

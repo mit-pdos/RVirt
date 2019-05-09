@@ -2,7 +2,7 @@ use crate::fdt::MachineMeta;
 use crate::context::Context;
 use crate::constants::SYMBOL_PA2VA_OFFSET;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
-use crate::{riscv, statics, trap};
+use crate::{riscv, statics};
 use core::ptr;
 use riscv_decode::types::RType;
 
@@ -437,7 +437,7 @@ pub fn handle_sfence_vma(state: &mut Context, instruction: RType) {
     if instruction.rs1() == 0 {
         flush_shadow_page_table(&mut state.shadow_page_tables);
     } else {
-        let va = trap::get_register(state, instruction.rs1());
+        let va = state.saved_registers.get(instruction.rs1());
         if va < DIRECT_MAP_OFFSET {
             for &root in &[UVA, KVA, MVA] {
                 let pte_addr = state.shadow_page_tables.pte_for_addr(root, va);
