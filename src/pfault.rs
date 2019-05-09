@@ -1,5 +1,5 @@
 use crate::context::Context;
-use crate::trap::constants::SATP_PPN;
+use crate::riscv::bits::SATP_PPN;
 use crate::{pmap::*, riscv, virtio};
 use riscv_decode::Instruction;
 

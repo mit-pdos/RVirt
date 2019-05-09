@@ -2,7 +2,7 @@
 use rvirt::*;
 use crate::machdebug::*;
 use crate::pagedebug::PageWalkError::{ErrUnmapped};
-use crate::trap::constants::STATUS_SUM;
+use crate::riscv::bits::STATUS_SUM;
 
 pub const MODE_NONE: u8 = 0;
 pub const MODE_SV39: u8 = 8;

@@ -1,6 +1,7 @@
 use crate::context::Context;
 use crate::memory_region::MemoryRegion;
-use crate::{pmap, trap};
+use crate::riscv::bits;
+use crate::pmap;
 
 #[allow(unused)]
 pub unsafe fn print_guest_backtrace(guest_memory: &MemoryRegion, state: &mut Context, pc: u64) {
@@ -10,7 +11,7 @@ pub unsafe fn print_guest_backtrace(guest_memory: &MemoryRegion, state: &mut Con
     let mut sp = state.saved_registers.get(2);
     let mut fp = state.saved_registers.get(8);
 
-    let page_table_ppn = state.csrs.satp & trap::constants::SATP_PPN;
+    let page_table_ppn = state.csrs.satp & bits::SATP_PPN;
 
     let mut old_fp = 0;
     while old_fp != fp {

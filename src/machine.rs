@@ -139,7 +139,7 @@ pub unsafe fn handle_ipi() {
 
 #[no_mangle]
 pub unsafe fn forward_exception() {
-    use crate::trap::constants::*;
+    use crate::riscv::bits::*;
 
     csrw!(sepc, csrr!(mepc));
     csrw!(scause, csrr!(mcause));

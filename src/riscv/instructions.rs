@@ -1,5 +1,5 @@
 
-use crate::trap::constants::STATUS_FS;
+use crate::riscv::bits::STATUS_FS;
 
 /** atomic read from CSR */
 #[macro_export]
@@ -8,7 +8,7 @@ macro_rules! csrr {
         {
             let value: u64;
             #[allow(unused_unsafe)]
-            unsafe { asm!("csrr $0, $1" : "=r"(value) : "i"(crate::csr::$r)) };
+            unsafe { asm!("csrr $0, $1" : "=r"(value) : "i"(crate::riscv::csr::$r)) };
             value
         }
     };
@@ -20,7 +20,7 @@ macro_rules! csrw {
     ( $r:ident, $x:expr ) => {
         {
             let x: u64 = $x;
-            asm!("csrw $0, $1" :: "i"(crate::csr::$r), "r"(x));
+            asm!("csrw $0, $1" :: "i"(crate::riscv::csr::$r), "r"(x));
         }
     };
 }
@@ -34,7 +34,7 @@ macro_rules! csrwi {
             asm!("li t0, $1
                   csrw $0, t0"
                  :
-                 : "i"(crate::csr::$r), "i"(X)
+                 : "i"(crate::riscv::csr::$r), "i"(X)
                  : "t0"
                  : "volatile");
         }
@@ -47,7 +47,7 @@ macro_rules! csrs {
     ( $r:ident, $x:expr ) => {
         {
             let x: u64 = $x;
-            asm!("csrs $0, $1" :: "i"(crate::csr::$r), "r"(x));
+            asm!("csrs $0, $1" :: "i"(crate::riscv::csr::$r), "r"(x));
         }
     };
 }
@@ -61,7 +61,7 @@ macro_rules! csrsi {
             asm!("li t0, $1
                   csrs $0, t0"
                  :
-                 : "i"(crate::csr::$r), "i"(X)
+                 : "i"(crate::riscv::csr::$r), "i"(X)
                  : "t0"
                  : "volatile");
         }
@@ -74,7 +74,7 @@ macro_rules! csrc {
     ( $r:ident, $x:expr ) => {
         {
             let x: u64 = $x;
-            asm!("csrc $0, $1" :: "i"(crate::csr::$r), "r"(x));
+            asm!("csrc $0, $1" :: "i"(crate::riscv::csr::$r), "r"(x));
         }
     };
 }

@@ -130,10 +130,10 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
 
 #[no_mangle]
 unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, hart_base_pa: u64, guestid: u64) {
-    csrw!(stvec, crate::trap::strap_entry as *const () as u64);
+    csrw!(stvec, trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
-    csrs!(sstatus, trap::constants::STATUS_SUM);
-    csrc!(sstatus, trap::constants::STATUS_SPP);
+    csrs!(sstatus, riscv::bits::STATUS_SUM);
+    csrc!(sstatus, riscv::bits::STATUS_SPP);
 
     let guestid = if guestid == u64::max_value() {
         None

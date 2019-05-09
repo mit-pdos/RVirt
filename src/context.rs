@@ -4,10 +4,11 @@ use crate::fdt::MachineMeta;
 use crate::memory_region::MemoryRegion;
 use crate::plic::PlicState;
 use crate::pmap::{PageTables, PageTableRoot};
+use crate::riscv::bits::*;
+use crate::riscv::csr;
 use crate::statics::SHARED_STATICS;
-use crate::trap::constants::*;
 use crate::trap::U64Bits;
-use crate::{csr, pmap, print, riscv, virtio};
+use crate::{pmap, print, riscv, virtio};
 
 pub static CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
 
