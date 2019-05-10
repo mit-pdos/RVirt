@@ -53,6 +53,34 @@ impl<T: Copy> MemoryRegion<T> {
     pub fn in_region(&self, addr: u64) -> bool {
         addr >= self.base_address && addr < self.base_address + self.length_bytes
     }
+
+    pub fn slice(&self, index: u64, len: u64) -> &[u8] {
+        assert!(index >= self.base_address);
+
+        let offset = index - self.base_address;
+        assert!(offset < self.length_bytes);
+
+        assert!(self.length_bytes - offset >= len);
+
+        unsafe {
+            core::slice::from_raw_parts((self.ptr as *mut u8).wrapping_add(offset as usize),
+                                        len as usize)
+        }
+    }
+
+    pub fn slice_mut(&mut self, index: u64, len: u64) -> &mut [u8] {
+        assert!(index >= self.base_address);
+
+        let offset = index - self.base_address;
+        assert!(offset < self.length_bytes);
+
+        assert!(self.length_bytes - offset >= len);
+
+        unsafe {
+            core::slice::from_raw_parts_mut((self.ptr as *mut u8).wrapping_add(offset as usize),
+                                            len as usize)
+        }
+    }
 }
 
 impl<T: Copy> Index<u64> for MemoryRegion<T> {

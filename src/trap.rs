@@ -1,7 +1,7 @@
 use riscv_decode::Instruction;
-use crate::context::{Context, CONTEXT};
+use crate::context::{Context, CONTEXT, IrqMapping};
 use crate::riscv::bits::*;
-use crate::{pfault, pmap, riscv, sum};
+use crate::{pfault, pmap, riscv, sum, virtio};
 
 pub trait U64Bits {
     fn get(&self, mask: Self) -> bool;
@@ -319,16 +319,27 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
             // External
             let host_irq = state.host_plic.claim_and_clear();
             let guest_irq = state.irq_map[host_irq as usize];
-            if guest_irq != 0 {
-                state.plic.set_pending(guest_irq as u32, true);
+            match guest_irq {
+                IrqMapping::Virtio { device_index, guest_irq } => {
+                    let forward = match state.virtio.devices[device_index as usize] {
+                        virtio::Device::Passthrough { .. } => true,
+                        virtio::Device::Unmapped => false,
+                        virtio::Device::Macb(ref mut macb) => macb.interrupt(&mut state.guest_memory),
+                    };
 
-                // Guest might have masked out this interrupt
-                if state.plic.interrupt_pending() {
-                    state.no_interrupt = false;
-                    state.csrs.sip |= IP_SEIP;
-                } else {
-                    assert_eq!(state.csrs.sip & IP_SEIP, 0);
+                    if forward {
+                        state.plic.set_pending(guest_irq as u32, true);
+
+                        // Guest might have masked out this interrupt
+                        if state.plic.interrupt_pending() {
+                            state.no_interrupt = false;
+                            state.csrs.sip |= IP_SEIP;
+                        } else {
+                            assert_eq!(state.csrs.sip & IP_SEIP, 0);
+                        }
+                    }
                 }
+                IrqMapping::Ignored => {}
             }
 
         }

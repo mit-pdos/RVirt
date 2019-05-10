@@ -21,7 +21,7 @@ https://static.dev.sifive.com/U54-MC-RVCoreIP.pdf
 
 Virtual I/O Device Spec
 -----------------------
-http://docs.oasis-open.org/virtio/virtio/v1.0/csprd02/virtio-v1.0-csprd02.pdf
+https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.pdf
 
 Linux Constants
 ---------------

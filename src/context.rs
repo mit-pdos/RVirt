@@ -63,6 +63,12 @@ pub struct SavedRegisters {
     registers: MemoryRegion,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum IrqMapping {
+    Virtio { device_index: u8, guest_irq: u16 },
+    Ignored,
+}
+
 pub struct Context {
     pub csrs: ControlRegisters,
     pub plic: PlicState,
@@ -85,7 +91,7 @@ pub struct Context {
     pub host_plic: HostPlic,
 
     /// Map from host external interrupt number to guest external interrupt nmuber
-    pub irq_map: [u16; 512],
+    pub irq_map: [IrqMapping; 512],
 }
 
 
@@ -411,7 +417,7 @@ pub unsafe fn initialize(machine: &MachineMeta,
                          guest_shift: u64,
                          hartid: u64,
                          guestid: Option<u64>) {
-    let mut irq_map = [0; 512];
+    let mut irq_map = [IrqMapping::Ignored; 512];
     let mut virtio_devices = ArrayVec::new();
     for i in 0..4 {
         let index = (guestid.unwrap_or(1) as usize - 1) * 4 + i;
@@ -425,8 +431,11 @@ pub unsafe fn initialize(machine: &MachineMeta,
                     break;
                 }
             }
-            assert_eq!(irq_map[host_irq as usize], 0);
-            irq_map[host_irq as usize] = guest_irq.unwrap() as u16;
+            assert_eq!(irq_map[host_irq as usize], IrqMapping::Ignored);
+            irq_map[host_irq as usize] = IrqMapping::Virtio {
+                device_index: i as u8,
+                guest_irq: guest_irq.unwrap() as u16
+            };
         } else {
             virtio_devices.push(virtio::Device::Unmapped);
         }

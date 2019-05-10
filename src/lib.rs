@@ -102,6 +102,7 @@ pub mod print;
 pub mod backtrace;
 pub mod constants;
 pub mod context;
+pub mod drivers;
 pub mod elf;
 pub mod fdt;
 pub mod memory_region;
