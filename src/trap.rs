@@ -284,7 +284,7 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
     let interrupt = cause & 0xff;
     match interrupt {
         0x1 => {
-            // Software interrupt. M-mode code actually uses these to single timer interrupts
+            // Software interrupt. M-mode code actually uses these to signal timer interrupts
             // because disarming a software interrupt doesn't require an SBI call but disarming
             // timer interrupts might. In more detail, on some hardware `sip.stip` will not be
             // writable while `sip.ssip` will be.
@@ -292,22 +292,20 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
             assert_eq!(csrr!(sip) & (1 << interrupt), 0);
 
             let time = state.host_clint.get_mtime();
+            let mut next = time + 1_000_000;
+
             crate::context::Uart::timer(state, time);
             if state.csrs.mtimecmp <= time {
                 state.csrs.sip |= IP_STIP;
                 state.no_interrupt = false;
+            } else {
+                next = next.min(state.csrs.mtimecmp);
             }
 
-            let mut next = 0xffffffff;
             if state.uart.next_interrupt_time > time {
                 next = next.min(state.uart.next_interrupt_time);
             }
-            if state.csrs.mtimecmp > time {
-                next = next.min(state.csrs.mtimecmp);
-            }
-            if next < 0xffffffff {
-                state.host_clint.set_mtimecmp(next);
-            }
+            state.host_clint.set_mtimecmp(next);
         }
         0x5 => {
             // Supervisor timer interrupt. This is unreachable because the M-mode code will always
