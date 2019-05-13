@@ -61,7 +61,6 @@ impl<T: Copy> MemoryRegion<T> {
         assert!(offset < self.length_bytes);
 
         assert!(self.length_bytes - offset >= len);
-
         unsafe {
             core::slice::from_raw_parts((self.ptr as *mut u8).wrapping_add(offset as usize),
                                         len as usize)
@@ -75,7 +74,6 @@ impl<T: Copy> MemoryRegion<T> {
         assert!(offset < self.length_bytes);
 
         assert!(self.length_bytes - offset >= len);
-
         unsafe {
             core::slice::from_raw_parts_mut((self.ptr as *mut u8).wrapping_add(offset as usize),
                                             len as usize)
