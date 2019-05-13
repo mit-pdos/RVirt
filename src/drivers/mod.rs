@@ -1,5 +1,6 @@
 use arrayvec::ArrayVec;
 use byteorder::{ByteOrder, LittleEndian};
+use spin::Mutex;
 use crate::memory_region::MemoryRegion;
 
 pub mod macb;
@@ -50,11 +51,11 @@ pub trait Driver: Sized {
     const FEATURES: u64;
     const QUEUE_NUM_MAX: u32;
 
-    fn interrupt(device: &mut GuestDevice<Self>, guest_memory: &mut MemoryRegion) -> bool;
-    fn doorbell(device: &mut GuestDevice<Self>, guest_memory: &mut MemoryRegion, queue: u32);
+    fn interrupt(&mut self) -> bool;
+    fn doorbell(&mut self, queue: u32);
 
-    fn read_config_u8(device: &GuestDevice<Self>, guest_memory: &mut MemoryRegion, offset: u64) -> u8;
-    fn read_config_u32(device: &GuestDevice<Self>, guest_memory: &mut MemoryRegion, offset: u64) -> u32 {
+    fn read_config_u8(&mut self, offset: u64) -> u8;
+    fn read_config_u32(&mut self, offset: u64) -> u32 {
         u32::from_le_bytes([
             Self::read_config_u8(device, guest_memory, offset),
             Self::read_config_u8(device, guest_memory, offset+1),
@@ -62,15 +63,15 @@ pub trait Driver: Sized {
             Self::read_config_u8(device, guest_memory, offset+3),
         ])
     }
-    fn write_config_u8(device: &mut GuestDevice<Self>, guest_memory: &mut MemoryRegion, offset: u64, value: u8);
-    fn write_config_u32(device: &mut GuestDevice<Self>, guest_memory: &mut MemoryRegion, offset: u64, value: u32) {
+    fn write_config_u8(&mut self, offset: u64, value: u8);
+    fn write_config_u32(&mut self, offset: u64, value: u32) {
         Self::write_config_u8(device, guest_memory, offset, value.to_le_bytes()[0]);
         Self::write_config_u8(device, guest_memory, offset+1, value.to_le_bytes()[1]);
         Self::write_config_u8(device, guest_memory, offset+2, value.to_le_bytes()[2]);
         Self::write_config_u8(device, guest_memory, offset+3, value.to_le_bytes()[3]);
     }
 
-    fn reset(device: &mut GuestDevice<Self>, guest_memory: &mut MemoryRegion);
+    fn reset(&mut self);
 }
 
 pub struct DescriptorTable<'a> {
@@ -117,7 +118,7 @@ pub struct GuestDevice<D: Driver> {
     interrupt_status: u32,
     status: u32,
 
-    host_driver: D,
+    host_driver: &'static Mutex<D>,
 }
 
 impl<D: Driver> GuestDevice<D> {
