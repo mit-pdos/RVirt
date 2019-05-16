@@ -87,6 +87,9 @@ pub struct Context {
     /// If set, hypervisor exits do not need to check for pending interrupts
     pub no_interrupt: bool,
 
+    pub tlb_caches_invalid_ptes: bool,
+    pub consecutive_page_fault_count: u64,
+
     pub host_clint: HostClint,
     pub host_plic: HostPlic,
 
@@ -490,6 +493,8 @@ pub unsafe fn initialize(machine: &MachineMeta,
             claim_clear: MemoryRegion::with_base_address(
                 pmap::pa2va(machine.plic_address + 0x200004 + 0x1000 * plic_context), 0, 8),
         },
+        consecutive_page_fault_count: 0,
+        tlb_caches_invalid_ptes: false,
         irq_map,
     };
 

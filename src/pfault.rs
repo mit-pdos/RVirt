@@ -73,9 +73,24 @@ pub fn handle_page_fault(state: &mut Context, cause: u64, instruction: Option<u3
                 PageTableLevel::Level1GB => 0x200,
             };
 
-            state.shadow_page_tables.set_mapping(
-                shadow, page, (host_pa >> 2) | reserved_bits | perm | PTE_AD | PTE_USER | PTE_VALID);
-            riscv::sfence_vma_addr(guest_va);
+            let new_shadow_pte = (host_pa >> 2) | reserved_bits | perm | PTE_AD | PTE_USER | PTE_VALID;
+            let old_shadow_pte = state.shadow_page_tables.rmw_mapping(shadow, page, new_shadow_pte);
+
+            // Flushing the TLB entry for a virtual address can be very expensive and we only need
+            // to do one here if the processor cache invalid TLB entries. The logic below attempts
+            // to detect whether invalid PTEs are being cached, and if so sets a flag so that future
+            // page faults will trigger a flush.
+            if state.tlb_caches_invalid_ptes {
+                riscv::sfence_vma_addr(guest_va);
+            } else if new_shadow_pte == old_shadow_pte {
+                state.consecutive_page_fault_count += 1;
+                if state.consecutive_page_fault_count == 10 {
+                    state.tlb_caches_invalid_ptes = true;
+                }
+            } else {
+                state.consecutive_page_fault_count = 1;
+            }
+
             return true;
         } else if access != PTE_EXECUTE && state.smode {
             let pa = (translation.guest_pa & !0xfff) | (guest_va & 0xfff);
