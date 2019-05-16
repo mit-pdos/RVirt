@@ -4,6 +4,7 @@ use crate::context::Context;
 use crate::memory_region::MemoryRegion;
 use crate::drivers::macb::MacbDriver;
 use crate::{pmap, riscv, drivers};
+use crate::statics::SHARED_STATICS;
 
 pub const MAX_QUEUES: usize = 4;
 pub const MAX_DEVICES: usize = 4;
@@ -26,7 +27,7 @@ pub enum Device {
         device_registers: MemoryRegion<u32>,
     },
     Unmapped,
-    Macb(drivers::GuestDevice<MacbDriver>),
+    Macb(drivers::LocalContext<MacbDriver>),
 }
 impl Device {
     pub unsafe fn new(host_base_address: u64) -> Self {
@@ -126,12 +127,20 @@ pub fn handle_device_access(state: &mut Context, guest_pa: u64, instruction: u32
                 }
             }
         }
-        Device::Macb(ref mut macb) => match riscv_decode::decode(instruction).ok() {
-            Some(Instruction::Lb(i)) => state.saved_registers.set(i.rd(), macb.read_u8(&mut state.guest_memory, offset) as u64),
-            Some(Instruction::Lw(i)) => state.saved_registers.set(i.rd(), macb.read_u32(&mut state.guest_memory, offset) as u64),
-            Some(Instruction::Sb(i)) => macb.write_u8(&mut state.guest_memory, offset, state.saved_registers.get(i.rs2()) as u8),
-            Some(Instruction::Sw(i)) => macb.write_u32(&mut state.guest_memory, offset, state.saved_registers.get(i.rs2()) as u32),
-            Some(_) | None => {}
+        Device::Macb(ref mut local) => {
+            let mut driver = SHARED_STATICS.net.lock();
+            let driver = driver.as_mut().unwrap();
+            match riscv_decode::decode(instruction).ok() {
+                Some(Instruction::Lb(i)) =>
+                    state.saved_registers.set(i.rd(), local.read_u8(driver, &mut state.guest_memory, offset) as u64),
+                Some(Instruction::Lw(i)) =>
+                    state.saved_registers.set(i.rd(), local.read_u32(driver, &mut state.guest_memory, offset) as u64),
+                Some(Instruction::Sb(i)) =>
+                    local.write_u8(driver, &mut state.guest_memory, offset, state.saved_registers.get(i.rs2()) as u8),
+                Some(Instruction::Sw(i)) =>
+                    local.write_u32(driver, &mut state.guest_memory, offset, state.saved_registers.get(i.rs2()) as u32),
+                Some(_) | None => {}
+            }
         }
     }
     riscv::set_sepc(csrr!(sepc) + riscv_decode::instruction_length(instruction as u16) as u64);

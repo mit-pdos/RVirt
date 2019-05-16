@@ -1,6 +1,7 @@
 use riscv_decode::Instruction;
 use crate::context::{Context, CONTEXT, IrqMapping};
 use crate::riscv::bits::*;
+use crate::statics::SHARED_STATICS;
 use crate::{pfault, pmap, riscv, sum, virtio};
 
 pub trait U64Bits {
@@ -303,7 +304,11 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
                     let forward = match state.virtio.devices[device_index as usize] {
                         virtio::Device::Passthrough { .. } => true,
                         virtio::Device::Unmapped => false,
-                        virtio::Device::Macb(ref mut macb) => macb.interrupt(&mut state.guest_memory),
+                        virtio::Device::Macb(ref mut macb) => {
+                            let mut driver = SHARED_STATICS.net.lock();
+                            let driver = driver.as_mut().unwrap();
+                            macb.interrupt(driver, &mut state.guest_memory)
+                        }
                     };
 
                     if forward {

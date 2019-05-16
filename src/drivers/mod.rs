@@ -1,5 +1,6 @@
 use arrayvec::ArrayVec;
 use byteorder::{ByteOrder, LittleEndian};
+use core::marker::PhantomData;
 use spin::Mutex;
 use crate::memory_region::MemoryRegion;
 
@@ -57,18 +58,18 @@ pub trait Driver: Sized {
     fn read_config_u8(&mut self, offset: u64) -> u8;
     fn read_config_u32(&mut self, offset: u64) -> u32 {
         u32::from_le_bytes([
-            Self::read_config_u8(device, guest_memory, offset),
-            Self::read_config_u8(device, guest_memory, offset+1),
-            Self::read_config_u8(device, guest_memory, offset+2),
-            Self::read_config_u8(device, guest_memory, offset+3),
+            self.read_config_u8(offset),
+            self.read_config_u8(offset+1),
+            self.read_config_u8(offset+2),
+            self.read_config_u8(offset+3),
         ])
     }
     fn write_config_u8(&mut self, offset: u64, value: u8);
     fn write_config_u32(&mut self, offset: u64, value: u32) {
-        Self::write_config_u8(device, guest_memory, offset, value.to_le_bytes()[0]);
-        Self::write_config_u8(device, guest_memory, offset+1, value.to_le_bytes()[1]);
-        Self::write_config_u8(device, guest_memory, offset+2, value.to_le_bytes()[2]);
-        Self::write_config_u8(device, guest_memory, offset+3, value.to_le_bytes()[3]);
+        self.write_config_u8(offset, value.to_le_bytes()[0]);
+        self.write_config_u8(offset+1, value.to_le_bytes()[1]);
+        self.write_config_u8(offset+2, value.to_le_bytes()[2]);
+        self.write_config_u8(offset+3, value.to_le_bytes()[3]);
     }
 
     fn reset(&mut self);
@@ -102,7 +103,7 @@ impl<'a> DescriptorTable<'a> {
     fn set_used_ring_len(&mut self, index: usize, value: u32) { LittleEndian::write_u32(&mut self.used[8+8*index..], value) }
 }
 
-pub struct GuestDevice<D: Driver> {
+pub struct LocalContext<D: Driver> {
     host_features_sel: u32,
 
     guest_features_sel: u32,
@@ -118,11 +119,11 @@ pub struct GuestDevice<D: Driver> {
     interrupt_status: u32,
     status: u32,
 
-    host_driver: &'static Mutex<D>,
+    _phantom: PhantomData<D>
 }
 
-impl<D: Driver> GuestDevice<D> {
-    pub fn new(host_driver: D) -> Self {
+impl<D: Driver> LocalContext<D> {
+    pub fn new() -> Self {
         Self {
             host_features_sel: 0,
             guest_features_sel: 0,
@@ -134,25 +135,25 @@ impl<D: Driver> GuestDevice<D> {
             queue_pfn: [0; MAX_QUEUES],
             interrupt_status: 0,
             status: 0,
-            host_driver,
+            _phantom: PhantomData,
         }
     }
 
-    pub fn read_u8(&mut self, guest_memory: &mut MemoryRegion, offset: u64) -> u8 {
+    pub fn read_u8(&mut self, device: &mut D, guest_memory: &mut MemoryRegion, offset: u64) -> u8 {
         if offset > 0x100 {
-            D::read_config_u8(self, guest_memory, offset)
+            device.read_config_u8(offset)
         } else {
             0
         }
     }
 
-    pub fn read_u32(&mut self, guest_memory: &mut MemoryRegion, offset: u64) -> u32 {
+    pub fn read_u32(&mut self, device: &mut D, guest_memory: &mut MemoryRegion, offset: u64) -> u32 {
         if offset % 4 != 0 {
             return 0;
         }
 
         if offset > 0x100 {
-            return D::read_config_u32(self, guest_memory, offset);
+            return device.read_config_u32(offset);
         }
 
         match offset {
@@ -180,19 +181,19 @@ impl<D: Driver> GuestDevice<D> {
         }
     }
 
-    pub fn write_u8(&mut self, guest_memory: &mut MemoryRegion, offset: u64, value: u8)  {
+    pub fn write_u8(&mut self, device: &mut D, guest_memory: &mut MemoryRegion, offset: u64, value: u8)  {
         if offset > 0x100 {
-            D::write_config_u8(self, guest_memory, offset, value);
+            device.write_config_u8(offset, value);
         }
     }
 
-    pub fn write_u32(&mut self, guest_memory: &mut MemoryRegion, offset: u64, value: u32) {
+    pub fn write_u32(&mut self, device: &mut D, guest_memory: &mut MemoryRegion, offset: u64, value: u32) {
         if offset % 4 != 0 {
             return;
         }
 
         if offset > 0x100 {
-            D::write_config_u32(self, guest_memory, offset, value);
+            device.write_config_u32(offset, value);
             return;
         }
 
@@ -206,12 +207,12 @@ impl<D: Driver> GuestDevice<D> {
             REG_QUEUE_NUM => self.queue_num[self.queue_sel as usize] = value,
             REG_QUEUE_ALIGN => self.queue_align[self.queue_sel as usize] = value,
             REG_QUEUE_PFN => self.queue_pfn[self.queue_sel as usize] = value,
-            REG_QUEUE_NOTIFY => D::doorbell(self, guest_memory, value),
+            REG_QUEUE_NOTIFY => device.doorbell(self.queue_sel), // TODO: is this right?
             REG_INTERRUPT_ACK => self.interrupt_status &= !value,
             REG_STATUS => {
                 if value == 0 {
                     self.reset();
-                    D::reset(self, guest_memory);
+                    device.reset();
                 } else {
                     self.status = value;
                 }
@@ -221,8 +222,8 @@ impl<D: Driver> GuestDevice<D> {
     }
 
     /// Returns true if the interrupt should be forwarded onto the guest, false otherwise.
-    pub fn interrupt(&mut self, guest_memory: &mut MemoryRegion) -> bool {
-        D::interrupt(self, guest_memory)
+    pub fn interrupt(&mut self, device: &mut D,  guest_memory: &mut MemoryRegion) -> bool {
+        device.interrupt()
     }
 
     fn reset(&mut self) {
