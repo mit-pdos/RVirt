@@ -256,23 +256,6 @@ pub fn strap() {
     } else {
         if cause != SCAUSE_ENV_CALL { // no need to print anything for guest syscalls...
             println!("Forward exception (cause = {}, smode={})!", cause, state.smode);
-        } else {
-            // println!("system call: {}({:#x}, {:#x}, {:#x}, {:#x})",
-            //          syscall_name(state.saved_registers.get(17)),
-            //          state.saved_registers.get(10), state.saved_registers.get(11),
-            //          state.saved_registers.get(12), state.saved_registers.get(13)
-            // );
-            // if syscall_name(state.saved_registers.get(17)) == "write" {
-            //     let fd = state.saved_registers.get(10);
-            //     let ptr = state.saved_registers.get(11);
-            //     let len = state.saved_registers.get(12);
-            //     if fd == 1 {
-            //         print!("data = ");
-            //         for i in 0..len {
-            //             print::guest_putchar(*((ptr + i) as *const u8));
-            //         }
-            //     }
-            // }
         }
         forward_exception(&mut state, cause, csrr!(sepc));
     }
