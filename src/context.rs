@@ -443,12 +443,8 @@ pub unsafe fn initialize(machine: &MachineMeta,
 
     let plic_context = machine.harts.iter().find(|h| h.hartid == hartid).unwrap().plic_context;
 
-    // Memory backing for CONTEXT might not be in a valid state, so force_unlock() first. This is
-    // safe because no other hart will be trying to access this memory right now.
-    CONTEXT.force_unlock();
-
-    *CONTEXT.lock() = Some(Context{
-        csrs: ControlRegisters{
+    let context = Context {
+        csrs: ControlRegisters {
             sstatus: 0,
             stvec: 0,
             sie: 0,
@@ -495,5 +491,12 @@ pub unsafe fn initialize(machine: &MachineMeta,
                 pmap::pa2va(machine.plic_address + 0x200004 + 0x1000 * plic_context), 0, 8),
         },
         irq_map,
-    });
+    };
+
+    // Memory backing for CONTEXT might not be in a valid state, so force_unlock() first, and avoid
+    // calling drop on the old contents. This is safe because no other hart will be trying to access
+    // this memory right now.
+    CONTEXT.force_unlock();
+    let old = CONTEXT.lock().replace(context);
+    core::mem::forget(old);
 }
