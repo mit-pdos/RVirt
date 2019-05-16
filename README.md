@@ -1,6 +1,6 @@
 # RVirt
 
-RVirt is an S-mode trap-and-emulate hypervisor for RISC-V. It is currently targeted at QEMU's virt machine type and provides an M-mode stub so that it doesn't have to rely on BBL. It is designed to be powerful enough to run Linux as a guest operating system.
+RVirt is an S-mode trap-and-emulate hypervisor for RISC-V. It is currently targeted at QEMU's virt machine type and provides an M-mode stub so that it doesn't have to rely on BBL. It is powerful enough to run Linux as a guest operating system.
 
 ## FAQ
 
@@ -10,15 +10,12 @@ RISC-V is [classically virtualizable](https://en.wikipedia.org/wiki/Popek_and_Go
 
 ### Why Rust?
 
-Why not? Rust is a pleasant language to work with and can directly target bare metal systems. Although I had hoped otherwise, safety turned out not to be a big factor as nearly all the code turned out to directly or indirectly rely on unsafe.
+Why not? Rust is a pleasant language to work with and can directly target bare metal systems. I was also exited by Rust's ability to guarantee memory safety for safe code, but I found the amount of unsafe code required for initialization and vm entry/exit partially negated this benefit.
 
 ## Installing dependencies
 
  - rustup: https://rustup.rs/
    - customize configuration to select the "nightly" build during setup.
-   - add the RISC-V target:
-
-         $ rustup target add riscv64imac-unknown-none-elf
 
  - binutils (for cross-compilation):
    - if it's available on your distro:
@@ -26,7 +23,7 @@ Why not? Rust is a pleasant language to work with and can directly target bare m
          $ sudo apt-get install binutils-riscv64-linux-gnu
 
       You may have to change the makefile to use riscv64-linux-gnu-ld as the linker
-      
+
    - if not:
 
          $ wget https://ftp.gnu.org/gnu/binutils/binutils-2.32.tar.xz
@@ -64,18 +61,9 @@ Why not? Rust is a pleasant language to work with and can directly target bare m
        $ make
        $ sudo make install
 
-## Instructions
+## Prepare guest operating system
 
-Download RVirt's source code:
-
-    $ git clone https://github.com/fintelia/rvirt
-    $ cd rvirt
-
-Build RVirt:
-
-    $ make release
-
-You'll need guest binaries to run RVirt: a kernel binary (vmlinux) and a disk image (stage4-disk.img) from [here](https://fedorapeople.org/groups/risc-v/disk-images/).
+You'll need guest binaries to run RVirt. The easiest option are to get a kernel binary (vmlinux) and a disk image (stage4-disk.img) from [here](https://fedorapeople.org/groups/risc-v/disk-images/):
 
       # make sure to be in the root of the repository
     $ wget https://fedorapeople.org/groups/risc-v/disk-images/vmlinux
@@ -83,9 +71,39 @@ You'll need guest binaries to run RVirt: a kernel binary (vmlinux) and a disk im
     $ wget https://fedorapeople.org/groups/risc-v/disk-images/stage4-disk.img.xz
     $ unxz stage4-disk.img.xz
 
-Now you can run with:
+
+Instead of that disk image, you can also use a more recent one from [here](http://185.97.32.145/koji/tasks?state=closed&view=flat&method=createAppliance&order=-id) (Some links there have invalid TLS certs, replace 'https://fedora-riscv.tranquillity.se' with the IP address version 'http://185.97.32.145'). If you do, you may have to replace the disk image name or kernel boot arguments to select the right boot partition.
+
+### Configure COW disk for the guest
+
+If you want to avoid accidentally corrupting the your base disk image, you can use a copy-on-write disk instead:
+
+    $ chmod -w Fedora-Developer-Rawhide-20190506.n.0-sda
+	$ qemu-img create -f qcow2 -b Fedora-Developer-Rawhide-20190506.n.0-sda.raw -F raw img01.qcow2
+
+## Instructions
+
+Download RVirt's source code:
+
+    $ git clone https://github.com/fintelia/rvirt
+    $ cd rvirt
+
+From inside the repository root directory, install the Rust RISC-V target (RVirt pins a specific compiler version so rustup needs to see its 'rust-toolchain' file):
+
+    $ rustup target add riscv64imac-unknown-none-elf
+
+Make any necessary edits to Makefile
+
+    - If your kernel image isn't named 'fedora-vmlinux' or your disk 'stage4-disk.img' then you'll want to change the appropriate line.
+	- If you want to pass different arguments to Linux (say because the root directory of your disk image is /dev/vda1 instead of /dev/vda) edit the -append "..." line accordingly.
+
+Build and run RVirt:
 
     $ make qemu
+
+Once boot is complete (which can take 4-5 minutes) you can SSH into the guest machine. The root password is likely to be 'riscv':
+
+    $ ssh -p 10001 root@localhost
 
 If you want to debug using gdb, run these commands in the project directory in separate shells:
 
@@ -94,7 +112,18 @@ If you want to debug using gdb, run these commands in the project directory in s
 
 ## Current Status
 
-RVirt can currently boot a Linux guest until it starts systemd. Once started, systemd prints a small amount of output and then hangs.
+RVirt supports running both inside an emulator and on real hardware and does runtime detection to learn what platform it is executing on. It has so far been tested with Fedora RISC-V builds, but likely  at least partially supports other distributions as well.
+
+### Supported Platforms
+
+Tier 1: Boots fully and supports interaction via SSH / serial console
+
+* QEMU virt machine type
+
+Tier 2: Boots partially but lacks driver support for block/network device to complete boot process
+
+* HiFive Unleashed board
+* QEMU sifiveu machine type
 
 ### Correctness
 
@@ -106,12 +135,16 @@ RVirt can currently boot a Linux guest until it starts systemd. Once started, sy
 - [x] Address lingering bugs in boot process
 
 ### Functionality
-Some features I'd like to have but not neccessary for correct virtualization of a single guest:
+Additional features not needed for the correct virtualization of a single guest:
 
-- [ ] multicore and inter-processor interrupts
 - [x] multiple guests
-- [ ] PCIe devices
+- [x] passthrough of virtio block and network devices
+- [ ] paravirtualized network devices backed by HiFive Unleashed's NIC
+- [ ] multicore guests and inter-processor interrupts between them
 
-Other features not used by Linux are unlikely to be implemented:
+Other features not used by Linux / not supported by current platforms are unlikely to be implemented:
+
 - [ ] ASID support
 - [ ] Sv48 or Sv57 guest page tables (only Sv39 currently allowed)
+- [ ] SR-IOV PCIe devices
+- [ ] 32-bit guests
