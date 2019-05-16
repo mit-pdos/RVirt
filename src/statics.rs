@@ -3,6 +3,7 @@ use core::sync::atomic::AtomicBool;
 use spin::Mutex;
 use crate::constants::*;
 use crate::print::{self, UartWriter};
+use crate::drivers::macb::MacbDriver;
 use crate::pmap;
 
 #[derive(Copy, Clone, Debug)]
@@ -24,6 +25,7 @@ pub struct Shared {
     pub uart_writer: Mutex<UartWriter>,
     pub ipi_reason_array: [Mutex<Option<IpiReason>>; MAX_HOST_HARTS],
     pub hart_lottery: AtomicBool,
+    pub net: Mutex<Option<MacbDriver>>,
 }
 
 pub struct ConditionalPointer(u64);
@@ -51,9 +53,7 @@ const MR: Mutex<Option<IpiReason>> = Mutex::new(None);
 /// is properly initialized.
 ///
 /// We hard code an address for the UART. This value will be replaced once the device tree has been
-/// parsed, but until then this provides a way to debug early boot issues. Once the memory subsystem
-/// is initialized, this will again be updated to use virtual addresses instead of physical
-/// addresses.
+/// parsed, but until then this provides a way to debug early boot issues.
 #[link_section = ".shared.data"]
 pub static __SHARED_STATICS_IMPL: Shared = Shared {
     boot_page_table: pmap::make_boot_page_table(MACHINE_SHARED_STATIC_ADDRESS),
@@ -64,4 +64,5 @@ pub static __SHARED_STATICS_IMPL: Shared = Shared {
     }),
     ipi_reason_array: [MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR,],
     hart_lottery: AtomicBool::new(true),
+    net: Mutex::new(None),
 };
