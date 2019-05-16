@@ -79,33 +79,22 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
         // Shared data segment
         pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 0x200000);
 
-        // Minimal page table to boot into S mode. See [1] for FU540 errata related to mixing huge
-        // pages and PMP.
-        //
-        // [1] https://github.com/riscv/riscv-isa-manual/issues/347
         let boot_page_table_pa = SHARED_STATICS.boot_page_table.as_ptr() as u64;
-        *((boot_page_table_pa) as *mut u64) = 0x00000000 | 0xcf;
-        *((boot_page_table_pa+16) as *mut u64) = ((boot_page_table_pa + 4096) >> 2) | 0x01;
-        *((boot_page_table_pa+24) as *mut u64) = 0x30000000 | 0xcf;
-        *((boot_page_table_pa+4088) as *mut u64) = ((boot_page_table_pa + 4096) >> 2) | 0x01;
-        *((boot_page_table_pa+4096) as *mut u64) = 0x20000000 | 0xcb;
-        for i in 1..512 {
-            *((boot_page_table_pa + 4096 + i*8) as *mut u64) = (0x20000000 + (i<<19)) | 0xc7;
-        }
         csrw!(satp, 8 << 60 | (boot_page_table_pa >> 12));
 
         // pmp::debug_pmp();
         // pagedebug::debug_paging();
 
-        // TODO: figure out why we have to do this dance instead of just assigning things directly
-        // i.e. why is it that rust will assign a0/a1? how do we stop that? In the mean time, use
-        // the `gp` and `tp` registers at temporaries (the ABI prohibits Rust from passing arguments
-        // in them).
+        // See https://github.com/rust-lang/rust/issues/60392. Until that is fixed, we work around
+        // the issue by using the `gp` and `tp` registers as temporaries (the ABI prohibits Rust
+        // from passing arguments in them).
         asm!("mv gp, $1
               mv tp, $0
               mv a0, gp
               mv a1, tp
-              mret" :: "r"(device_tree_blob), "r"(hartid) : "a0", "a1", "gp", "tp" : "volatile");
+              li t0, $2
+              add sp, sp, t0
+              mret" :: "r"(device_tree_blob), "r"(hartid), "i"(SYMBOL_PA2VA_OFFSET) : "a0", "a1", "gp", "tp", "t0" : "volatile");
     } else  {
         asm!("LOAD_ADDRESS t0, start_hart
              csrw mtvec, t0"

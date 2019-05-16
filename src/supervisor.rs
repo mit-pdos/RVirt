@@ -30,12 +30,10 @@ static GUEST_KERNEL: [u8; include_bytes!(env!("RVIRT_GUEST_KERNEL")).len()] =
 #[cfg(not(feature = "embed_guest_kernel"))]
 static GUEST_KERNEL: [u8; 0] = [];
 
-
+#[naked]
 #[no_mangle]
 #[link_section = ".text.entrypoint"]
 unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
-    asm!("li t0, $0
-          add sp, sp, t0" :: "i"(SYMBOL_PA2VA_OFFSET) : "t0" : "volatile");
     csrw!(stvec, (||{
         println!("scause={:x}", csrr!(scause));
         println!("sepc={:x}", csrr!(sepc));
@@ -43,7 +41,7 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     }) as fn() as *const () as u64);
 
     // Read and process host FDT.
-    let mut fdt = Fdt::new(device_tree_blob);
+    let mut fdt = Fdt::new(pa2va(device_tree_blob));
     assert!(fdt.magic_valid());
     assert!(fdt.version() >= 17 && fdt.last_comp_version() <= 17);
     assert!(fdt.total_size() < 64 * 1024);
@@ -65,10 +63,6 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
 
     // Do not allow the __SHARED_STATICS_IMPL symbol to be optimized out.
     assert_eq!(&__SHARED_STATICS_IMPL as *const _ as u64, constants::SUPERVISOR_SHARED_STATIC_ADDRESS);
-
-    // Initialize memory subsystem.
-    pmap::monitor_init(&*SHARED_STATICS);
-    let fdt = Fdt::new(pa2va(device_tree_blob));
 
     // Program PLIC priorities
     for i in 1..127 {

@@ -83,6 +83,7 @@
 
 #![no_std]
 #![feature(asm)]
+#![feature(const_fn)]
 #![feature(const_str_len)]
 #![feature(const_raw_ptr_deref)]
 #![feature(global_asm)]

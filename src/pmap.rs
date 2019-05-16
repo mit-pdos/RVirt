@@ -3,6 +3,7 @@ use crate::context::Context;
 use crate::constants::SYMBOL_PA2VA_OFFSET;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
 use crate::{riscv, statics};
+use arr_macro::arr;
 use core::ptr;
 use riscv_decode::types::RType;
 
@@ -50,10 +51,40 @@ mod page_table_constants {
 }
 pub use page_table_constants::*;
 
+/// Make a minimal page table to boot into S mode. See [1] for FU540 errata related to mixing huge
+/// pages and PMP.
+///
+/// [1] https://github.com/riscv/riscv-isa-manual/issues/347
+pub const fn make_boot_page_table(base_pa: u64) -> [u64; 1024] {
+    const fn pte(base_pa: u64, i: u64) -> u64 {
+        // Horrible hack to get around limitations of const functions (see issue #57563). For this
+        // to work, at most one of the conditions in `index` can be true.
+        let possible_values = [
+            0,
+            ((base_pa + 4096) >> 2) | 0x01,
+            0x20000000 | 0xcb,
+            (0x20000000 + (i.wrapping_sub(512) << 19)) | 0xc7,
+            ((i - DIRECT_MAP_PT_INDEX/8) << 28) | PTE_AD | PTE_RWXV,
+        ];
+
+        let index =
+            1 * (i == 511) as usize +
+            2 * (i == 512) as usize +
+            3 * (i >= 513) as usize +
+            4 * (i >= DIRECT_MAP_PT_INDEX/8) as usize * (i < DIRECT_MAP_PT_INDEX/8 + DIRECT_MAP_PAGES) as usize;
+
+        possible_values[index]
+    }
+
+    let mut i = 0;
+    arr![pte(base_pa, {i += 1; i - 1}); 1024]
+}
+
 #[repr(C, align(4096))]
 #[derive(Copy, Clone)]
 pub struct BootPageTable([u64; 512]);
 impl BootPageTable {
+
     pub fn init(&mut self) {
         for i in 0..DIRECT_MAP_PAGES {
             self.0[(DIRECT_MAP_PT_INDEX/8 + i) as usize] = (i << 28) | PTE_AD | PTE_RWXV;
@@ -292,21 +323,6 @@ pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64
     }
 
     None
-}
-
-pub unsafe fn monitor_init(shared: &statics::Shared) {
-    let boot_page_table_pa = shared.boot_page_table.as_ptr() as u64;
-
-    // Setup direct map region in boot page table
-    for i in 0..DIRECT_MAP_PAGES {
-        *((boot_page_table_pa + DIRECT_MAP_PT_INDEX + i * 8) as *mut u64) = (i << 28) | PTE_AD | PTE_RWXV;
-    }
-    crate::SHARED_STATICS.uart_writer.lock().switch_to_virtual_addresses();
-
-    *((boot_page_table_pa) as *mut u64) = 0;
-    *((boot_page_table_pa+16) as *mut u64) = 0;
-
-    riscv::sfence_vma();
 }
 
 pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, MemoryRegion, u64) {

@@ -10,6 +10,7 @@ spin = "0.5.0"
 riscv-decode = "0.2.0"
 arrayvec = { version = "0.4.10", default-features = false }
 byteorder = { version = "1.3.1", default-features = false }
+arr_macro = { git = "https://github.com/fintelia/arr_macro" }
 
 [profile.release]
 debug = true

@@ -14,7 +14,6 @@ pub enum UartWriterInner {
 
 pub struct UartWriter {
     pub pa: u64,
-    pub va: Option<u64>,
     pub inner: UartWriterInner,
 }
 
@@ -89,7 +88,7 @@ impl UartWriterInner {
 impl UartWriter {
     #[cfg(not(feature = "physical_symbol_addresses"))]
     pub fn putchar(&mut self, ch: u8) {
-        self.inner.putchar(self.va.unwrap_or(self.pa), ch);
+        self.inner.putchar(pmap::pa2va(self.pa), ch);
     }
 
     #[cfg(feature = "physical_symbol_addresses")]
@@ -98,7 +97,7 @@ impl UartWriter {
     }
 
     pub fn getchar(&mut self) -> Option<u8> {
-        self.inner.getchar(self.va.unwrap_or(self.pa))
+        self.inner.getchar(pmap::pa2va(self.pa))
     }
 
     pub unsafe fn init(&mut self, address: u64, ty: UartType) {
@@ -113,12 +112,7 @@ impl UartWriter {
                 UartType::SiFive => UartWriterInner::SiFive,
             };
             self.pa = address;
-            assert_eq!(self.va, None);
         }
-    }
-
-    pub unsafe fn switch_to_virtual_addresses(&mut self) {
-        self.va = Some(pmap::pa2va(self.pa));
     }
 }
 impl fmt::Write for UartWriter {
@@ -209,7 +203,6 @@ pub fn early_guess_uart() {
         let mut writer = SHARED_STATICS.uart_writer.lock();
         *writer = UartWriter {
             pa: 0x10000000,
-            va: None,
             inner: UartWriterInner::Ns16550a { initialized: false },
         }
     } else {

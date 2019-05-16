@@ -1,8 +1,9 @@
 
 use core::sync::atomic::AtomicBool;
 use spin::Mutex;
-use crate::print::{self, UartWriter};
 use crate::constants::*;
+use crate::print::{self, UartWriter};
+use crate::pmap;
 
 #[derive(Copy, Clone, Debug)]
 pub enum IpiReason {
@@ -55,13 +56,12 @@ const MR: Mutex<Option<IpiReason>> = Mutex::new(None);
 /// addresses.
 #[link_section = ".shared.data"]
 pub static __SHARED_STATICS_IMPL: Shared = Shared {
+    boot_page_table: pmap::make_boot_page_table(MACHINE_SHARED_STATIC_ADDRESS),
     // see also: print::early_guess_uart
     uart_writer: Mutex::new(UartWriter {
         pa: 0x10010000,
-        va: None,
         inner: print::UartWriterInner::SiFive,
     }),
     ipi_reason_array: [MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR,],
-    boot_page_table: [0; 1024],
     hart_lottery: AtomicBool::new(true),
 };
