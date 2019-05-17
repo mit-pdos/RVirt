@@ -57,10 +57,7 @@ msoftware_interrupt:
 	j msoftware_interrupt
 
 mtimer_interrupt:
-	li t0, 0x80
-	csrc mip, t0 // mip.mtip = 0
-
-	li t0, 0x02
+	li t0, 0x20
 	csrs mip, t0 // mip.stip = 1
 
 	csrr t0, mhartid
@@ -76,8 +73,49 @@ mexternal_interrupt:
 	j mexternal_interrupt
 
 exception:
+	li t1, 9
+	beq t0, t1, ecall_exception
 	call forward_exception
 	j return
+
+ecall_exception:
+	csrr t0, mepc
+	addi t0, t0, 4
+	csrw mepc, t0
+
+	beqz a7, sbi_set_timer
+
+	li t1, 3
+	beq a7, t1, sbi_send_ipi
+
+	li t1, 4
+	beq a7, t1, sbi_clear_ipi
+
+	li t1, 8
+	beq a7, t1, sbi_shutdown
+
+	j unknown_cause
+
+sbi_set_timer:
+	csrr t0, mhartid
+	slli t0, t0, 3
+	li t1, 0x2004000
+	add t1, t0, t1
+	sd a0, 0(t1)  // mtimecmp[hartid] = a0
+
+	li t0, 0x20
+	csrc mip, t0 // mip.stip = 0
+
+	j return
+
+sbi_send_ipi:
+	j return // TODO
+
+sbi_clear_ipi:
+	j return // TODO
+
+sbi_shutdown:
+	j sbi_shutdown
 
 return:
 	ld ra, 0(sp)

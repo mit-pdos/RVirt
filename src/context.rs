@@ -277,9 +277,6 @@ impl HostClint {
     pub fn get_mtime(&self) -> u64 {
         self.mtime[0]
     }
-    pub fn set_mtimecmp(&mut self, value: u64) {
-        self.mtimecmp[0] = value;
-    }
 }
 
 impl HostPlic {

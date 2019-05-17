@@ -234,7 +234,7 @@ pub fn strap() {
             0 => {
                 state.csrs.sip.set(IP_STIP, false);
                 state.csrs.mtimecmp = state.saved_registers.get(10);
-                state.host_clint.set_mtimecmp(state.csrs.mtimecmp);
+                riscv::sbi::set_timer(state.csrs.mtimecmp);
             }
             1 => {
                 let value = state.saved_registers.get(10) as u8;
@@ -267,13 +267,11 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
     let interrupt = cause & 0xff;
     match interrupt {
         0x1 => {
-            // Software interrupt. M-mode code actually uses these to signal timer interrupts
-            // because disarming a software interrupt doesn't require an SBI call but disarming
-            // timer interrupts might. In more detail, on some hardware `sip.stip` will not be
-            // writable while `sip.ssip` will be.
-            riscv::clear_sip(1 << interrupt);
-            assert_eq!(csrr!(sip) & (1 << interrupt), 0);
-
+            // Software interrupt
+            unreachable!();
+        }
+        0x5 => {
+            // Timer interrupt
             let time = state.host_clint.get_mtime();
             let mut next = time + 1_000_000;
 
@@ -288,13 +286,7 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
             if state.uart.next_interrupt_time > time {
                 next = next.min(state.uart.next_interrupt_time);
             }
-            state.host_clint.set_mtimecmp(next);
-        }
-        0x5 => {
-            // Supervisor timer interrupt. This is unreachable because the M-mode code will always
-            // generate supervisor *software* interrupts instead. See the case above for more
-            // details.
-            unreachable!();
+            riscv::sbi::set_timer(next);
         }
         0x9 => {
             // External

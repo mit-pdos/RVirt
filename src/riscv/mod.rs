@@ -3,6 +3,7 @@ pub mod instructions;
 
 pub mod csr;
 pub mod bits;
+pub mod sbi;
 
 pub use instructions::*;
 
