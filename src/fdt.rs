@@ -55,7 +55,7 @@ pub struct MachineMeta {
     pub uart_address: u64,
 
     pub plic_address: u64,
-    pub clint_address: u64,
+    pub clint_address: Option<u64>,
 
     pub virtio: ArrayVec<[Device; 16]>,
 
@@ -176,7 +176,6 @@ impl<'a> Fdt<'a> {
         let mut initrd_start: Option<u64> = None;
         let mut initrd_end: Option<u64> = None;
         let mut plic: Option<u64> = None;
-        let mut clint: Option<u64> = None;
 
         let mut meta = MachineMeta::default();
 
@@ -195,7 +194,10 @@ impl<'a> Fdt<'a> {
                 FdtVisit::Property { name, prop } => match (path, name) {
                     ("/chosen", "linux,initrd-end") => initrd_end = Some(prop.read_int()),
                     ("/chosen", "linux,initrd-start") => initrd_start = Some(prop.read_int()),
-                    ("/chosen", "bootargs") => meta.bootargs.push_str(prop.value_str().unwrap()),
+                    ("/chosen", "bootargs") => {
+                        meta.bootargs.push_str(prop.value_str()
+                                               .expect("Unable to parse bootargs string"))
+                    }
                     ("/memory", "reg") => {
                         let region = prop.read_range();
                         meta.physical_memory_offset = region.0;
@@ -215,7 +217,7 @@ impl<'a> Fdt<'a> {
                             _ => {},
                         }
                     }
-                    ("/soc/clint", "reg") => clint = Some(prop.read_range().0),
+                    ("/soc/clint", "reg") => meta.clint_address = Some(prop.read_range().0),
                     ("/soc/interrupt-controller", "reg") => plic = Some(prop.read_range().0),
                     ("/soc/interrupt-controller", "interrupts-extended") => {
                         let cells = prop.cells();
@@ -248,13 +250,12 @@ impl<'a> Fdt<'a> {
             }
         });
 
-        if initrd_start.is_some() && initrd_end.is_some() {
-            meta.initrd_start = initrd_start.unwrap();
-            meta.initrd_end = initrd_end.unwrap();
+        if let (Some(start), Some(end)) = (initrd_start, initrd_end) {
+            meta.initrd_start = start;
+            meta.initrd_end = end;
         }
 
-        meta.plic_address = plic.unwrap();
-        meta.clint_address = clint.unwrap();
+        meta.plic_address = plic.expect("PLIC address not specified");
 
         for &c in cpus.iter() {
             if let (Some(hartid), Some(phandle)) = c {

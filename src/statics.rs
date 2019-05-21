@@ -12,6 +12,7 @@ pub enum IpiReason {
         a1: u64,
         a2: u64,
         a3: u64,
+        a4: u64,
         sp: u64,
         satp: u64,
         mepc: u64,
@@ -59,8 +60,8 @@ pub static __SHARED_STATICS_IMPL: Shared = Shared {
     boot_page_table: pmap::make_boot_page_table(MACHINE_SHARED_STATIC_ADDRESS),
     // see also: print::early_guess_uart
     uart_writer: Mutex::new(UartWriter {
-        pa: 0x10010000,
-        inner: print::UartWriterInner::SiFive,
+        pa: 0x10000000,
+        inner: print::UartWriterInner::Ns16550a { initialized: false },
     }),
     ipi_reason_array: [MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR,],
     hart_lottery: AtomicBool::new(true),

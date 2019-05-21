@@ -3,6 +3,8 @@ ENTRY( _start )
 
 SECTIONS
 {
+  /DISCARD/ : { *(.text.jump) }
+
   . = 0x80000000;
   .text.machine :
   {

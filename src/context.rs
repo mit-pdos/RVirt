@@ -50,9 +50,11 @@ pub struct Uart {
     pub guestid: Option<u64>,
 }
 
-pub struct HostClint {
-    pub mtime: MemoryRegion,
-    pub mtimecmp: MemoryRegion,
+pub enum HostClint {
+    Direct {
+        mtime: MemoryRegion,
+    },
+    Sbi,
 }
 
 pub struct HostPlic {
@@ -275,7 +277,10 @@ impl Uart {
 
 impl HostClint {
     pub fn get_mtime(&self) -> u64 {
-        self.mtime[0]
+        match self {
+            HostClint::Direct { ref mtime } => mtime[0],
+            HostClint::Sbi => csrr!(time),
+        }
     }
 }
 
@@ -443,6 +448,13 @@ pub unsafe fn initialize(machine: &MachineMeta,
 
     let plic_context = machine.harts.iter().find(|h| h.hartid == hartid).unwrap().plic_context;
 
+    let host_clint = match machine.clint_address {
+        Some(address) => HostClint::Direct {
+            mtime: MemoryRegion::with_base_address(pmap::pa2va(address + 0xbff8), 0, 8),
+        },
+        None => HostClint::Sbi,
+    };
+
     let context = Context {
         csrs: ControlRegisters {
             sstatus: 0,
@@ -480,12 +492,7 @@ pub unsafe fn initialize(machine: &MachineMeta,
         guest_shift,
         smode: true,
         no_interrupt: true,
-        host_clint: HostClint {
-            mtime: MemoryRegion::with_base_address(
-                pmap::pa2va(machine.clint_address + 0xbff8), 0, 8),
-            mtimecmp: MemoryRegion::with_base_address(
-                pmap::pa2va(machine.clint_address + 0x4000 + 8*hartid), 0, 8),
-        },
+        host_clint,
         host_plic: HostPlic {
             claim_clear: MemoryRegion::with_base_address(
                 pmap::pa2va(machine.plic_address + 0x200004 + 0x1000 * plic_context), 0, 8),

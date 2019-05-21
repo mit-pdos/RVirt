@@ -80,20 +80,6 @@ pub const fn make_boot_page_table(base_pa: u64) -> [u64; 1024] {
     arr![pte(base_pa, {i += 1; i - 1}); 1024]
 }
 
-#[repr(C, align(4096))]
-#[derive(Copy, Clone)]
-pub struct BootPageTable([u64; 512]);
-impl BootPageTable {
-
-    pub fn init(&mut self) {
-        for i in 0..DIRECT_MAP_PAGES {
-            self.0[(DIRECT_MAP_PT_INDEX/8 + i) as usize] = (i << 28) | PTE_AD | PTE_RWXV;
-        }
-
-        self.0[511] = 0x20000000 | 0xcf;
-    }
-}
-
 // conversions between machine-physical addresses and supervisor-virtual address
 #[allow(unused)]
 pub fn pa2sa(pa: u64) -> u64 {
@@ -327,7 +313,7 @@ pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64
     None
 }
 
-pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, MemoryRegion, u64) {
+pub unsafe fn init(hart_base_pa: u64, shared_segments_shift: u64, machine: &MachineMeta) -> (PageTables, MemoryRegion, u64) {
     assert_eq!(hart_base_pa % HART_SEGMENT_SIZE, 0);
 
     let gpm_offset = machine.physical_memory_offset;
@@ -343,6 +329,8 @@ pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, Mem
     let memory_region = MemoryRegion::new(pa2va(hart_base_pa + PT_REGION_OFFSET), PT_REGION_SIZE);
     let mut shadow_page_tables = PageTables::new(memory_region, machine.initrd_start, machine.initrd_end);
 
+    let sshift = shared_segments_shift >> 2;
+
     // Initialize shadow page tables
     for &root in &[MPA, UVA, KVA, MVA] {
         let va = pa2va(shadow_page_tables.root_pa(root));
@@ -356,10 +344,14 @@ pub unsafe fn init(hart_base_pa: u64, machine: &MachineMeta) -> (PageTables, Mem
         let hp = 2 << 18;
         let page = shadow_page_tables.alloc_page();
         *((va + 0xff8) as *mut u64) = (page >> 2) | PTE_VALID;
-        shadow_page_tables.region.set_pte_unchecked(page, 0x20000000 | PTE_AD | PTE_READ | PTE_EXECUTE | PTE_VALID);              // Code + read only data
-        shadow_page_tables.region.set_pte_unchecked(page+8, (0x20000000+hp) | PTE_AD | PTE_READ | PTE_WRITE | PTE_VALID);         // Shared data
-        shadow_page_tables.region.set_pte_unchecked(page+16, ((hart_base_pa>>2)) | PTE_AD | PTE_READ | PTE_WRITE | PTE_VALID);    // Data
-        shadow_page_tables.region.set_pte_unchecked(page+32, ((hart_base_pa>>2)+hp) | PTE_AD | PTE_READ | PTE_WRITE | PTE_VALID); // Stack
+        shadow_page_tables.region.set_pte_unchecked(
+            page, (0x20000000+sshift) | PTE_AD | PTE_RXV);       // Code + read only data
+        shadow_page_tables.region.set_pte_unchecked(
+            page+8, (0x20000000+sshift+hp) | PTE_AD | PTE_RWV);  // Shared data
+        shadow_page_tables.region.set_pte_unchecked(
+            page+16, ((hart_base_pa>>2)) | PTE_AD | PTE_RWV);    // Data
+        shadow_page_tables.region.set_pte_unchecked(
+            page+32, ((hart_base_pa>>2)+hp) | PTE_AD | PTE_RWV); // Stack
     }
     shadow_page_tables.install_root(MPA);
 

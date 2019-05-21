@@ -30,10 +30,12 @@ static GUEST_KERNEL: [u8; include_bytes!(env!("RVIRT_GUEST_KERNEL")).len()] =
 #[cfg(not(feature = "embed_guest_kernel"))]
 static GUEST_KERNEL: [u8; 0] = [];
 
-#[naked]
+global_asm!(include_str!("scode.S"));
+
+//#[naked]
 #[no_mangle]
-#[link_section = ".text.entrypoint"]
-unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
+#[inline(never)]
+unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64) {
     csrw!(stvec, (||{
         println!("scause={:x}", csrr!(scause));
         println!("sepc={:x}", csrr!(sepc));
@@ -95,9 +97,13 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
         *(pa2va(machine.plic_address + 0x2000 + 0x80 * hart.plic_context) as *mut u32) = irq_mask;
         *(pa2va(machine.plic_address + 0x2000 + 0x80 * hart.plic_context + 4) as *mut u32) = 0;
 
-        (*(pa2va(hart_base_pa) as *mut pmap::BootPageTable)).init();
+        (*(pa2va(hart_base_pa) as *mut [u64; 1024])) = pmap::make_boot_page_table(hart_base_pa);
+        for i in 512..1024 {
+            *(pa2va(hart_base_pa + i * 8) as *mut u64) += shared_segments_shift >> 2;
+        }
+
         core::ptr::copy(pa2va(device_tree_blob) as *const u8,
-                        pa2va(hart_base_pa + 4096) as *mut u8,
+                        pa2va(hart_base_pa + 4096*2) as *mut u8,
                         fdt.total_size() as usize);
         if machine.initrd_start == machine.initrd_end {
             core::ptr::copy(&GUEST_KERNEL as *const _ as *const u8,
@@ -111,9 +117,10 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
 
         let reason = IpiReason::EnterSupervisor {
             a0: hart.hartid,
-            a1: hart_base_pa + 4096,
-            a2: hart_base_pa,
-            a3: if !single_guest { guestid as u64 } else { u64::max_value() },
+            a1: hart_base_pa + 4096*2,
+            a2: shared_segments_shift,
+            a3: hart_base_pa,
+            a4: if !single_guest { guestid as u64 } else { u64::max_value() },
             sp: hart_base_pa + (4<<20) + pmap::DIRECT_MAP_OFFSET,
             satp: 8 << 60 | (hart_base_pa >> 12),
             mepc: hart_entry as u64,
@@ -121,16 +128,20 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
 
         if single_hart {
             match reason {
-                IpiReason::EnterSupervisor { a0, a1, a2, a3, sp, satp, mepc: _ } => {
+                IpiReason::EnterSupervisor { a0, a1, a2, a3, a4, sp, satp, mepc: _ } => {
                     csrw!(satp, satp);
-                    asm!("mv sp, $0" :: "r"(sp) :: "volatile");
-                    hart_entry(a0, a1, a2, a3);
+                    hart_entry(a0, a1, a2, a3, a4, sp);
                 }
             }
         } else {
             // Send IPI
             *SHARED_STATICS.ipi_reason_array[hart.hartid as usize].lock() = Some(reason);
-            *(pa2va(machine.clint_address + hart.hartid*4) as *mut u32) = 1;
+            match machine.clint_address {
+                Some(address) => *(pa2va(address + hart.hartid*4) as *mut u32) = 1,
+                None => {
+                    unimplemented!()
+                }
+            }
         }
 
         guestid += 1;
@@ -139,8 +150,17 @@ unsafe fn sstart(hartid: u64, device_tree_blob: u64) {
     loop {}
 }
 
+
+#[naked]
 #[no_mangle]
-unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, hart_base_pa: u64, guestid: u64) {
+#[inline(never)]
+unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64, hart_base_pa: u64, guestid: u64, stack_pointer: u64) {
+    asm!("mv sp, $0
+          j hart_entry2" :: "r"(stack_pointer) :: "volatile");
+}
+
+#[no_mangle]
+unsafe fn hart_entry2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64, hart_base_pa: u64, guestid: u64) {
     csrw!(stvec, trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
     csrs!(sstatus, riscv::bits::STATUS_SUM);
@@ -159,7 +179,8 @@ unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, hart_base_pa: u64, gues
     let machine = fdt.parse();
 
     // Initialize memory subsystem.
-    let (shadow_page_tables, guest_memory, guest_shift) = pmap::init(hart_base_pa, &machine);
+    let (shadow_page_tables, guest_memory, guest_shift) =
+        pmap::init(hart_base_pa, shared_segments_shift, &machine);
 
     // Load guest binary
     let (entry, max_addr) = sum::access_user_memory(||{
