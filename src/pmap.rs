@@ -4,6 +4,7 @@ use crate::constants::SYMBOL_PA2VA_OFFSET;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
 use crate::{riscv, statics};
 use arr_macro::arr;
+use arrayvec::ArrayVec;
 use core::ptr;
 use riscv_decode::types::RType;
 
@@ -250,6 +251,51 @@ pub fn va2pa(va: u64) -> u64 {
     va - DIRECT_MAP_OFFSET
 }
 
+pub struct Pte {
+    pub addr: u64,
+    pub value: u64,
+    pub level: PageTableLevel,
+}
+pub struct PageTableWalk {
+    pub path: ArrayVec<[Pte; 3]>,
+    pub pa: u64,
+}
+pub fn walk_page_table<R: Fn(u64) -> Option<u64>>(root: u64, va: u64, read_pte: R) -> Option<PageTableWalk> {
+    if !is_sv39(va) || root % PAGE_SIZE != 0 {
+        return None;
+    }
+
+    let mut path = ArrayVec::new();
+    let mut page_table = root;
+    for level in 0..3 {
+        let pte_index = (va >> (30 - 9 * level)) & 0x1ff;
+        let pte_addr = page_table + pte_index * 8;
+        let pte = read_pte(pte_addr)?;
+        let level = match level {
+            0 => PageTableLevel::Level1GB,
+            1 => PageTableLevel::Level2MB,
+            2 => PageTableLevel::Level4KB,
+            _ => unreachable!(),
+        };
+
+        path.push(Pte {addr: pte_addr, value: pte, level});
+
+        if pte & PTE_VALID == 0 || ((pte & PTE_WRITE) != 0 && (pte & PTE_READ) == 0) {
+            return None;
+        } else if pte & (PTE_READ | PTE_EXECUTE) != 0 {
+            let pa = match level {
+                PageTableLevel::Level4KB => ((pte >> 10) << 12) | (va & 0xfff),
+                PageTableLevel::Level2MB => ((pte >> 19) << 21) | (va & 0x1fffff),
+                PageTableLevel::Level1GB => ((pte >> 28) << 30) | (va & 0x3fffffff),
+            };
+            return Some(PageTableWalk{path, pa});
+        } else {
+            page_table = (pte >> 10) << 12;
+        }
+    }
+    return None;
+}
+
 /// Returns whether va is a sign extended 39 bit address
 pub fn is_sv39(va: u64) -> bool {
     let shifted = va >> 38;
@@ -270,47 +316,22 @@ pub struct AddressTranslation {
     pub level: PageTableLevel,
 }
 
-// Returns the guest physical address associated with a given guest virtual address, by walking
-// guest page tables.
-pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64, addr: u64) -> Option<AddressTranslation> {
-    if !is_sv39(addr) || root_page_table % PAGE_SIZE != 0 {
-        return None;
-    }
-
-    let mut page_table = root_page_table;
-    for level in 0..3 {
-        let pte_index = (addr >> (30 - 9 * level)) & 0x1ff;
-        let pte_addr = page_table + pte_index * 8;
-        let pte = guest_memory.get(pte_addr)?;
-
-        if pte & PTE_VALID == 0 || ((pte & PTE_WRITE) != 0 && (pte & PTE_READ) == 0) {
-            return None;
-        } else if pte & (PTE_READ | PTE_EXECUTE) != 0 {
-            let guest_pa = match level {
-                2 => ((pte >> 10) << 12) | (addr & 0xfff),
-                1 => ((pte >> 19) << 21) | (addr & 0x1fffff),
-                0 => ((pte >> 28) << 30) | (addr & 0x3fffffff),
-                _ => unreachable!(),
-            };
-            let level = match level {
-                0 => PageTableLevel::Level1GB,
-                1 => PageTableLevel::Level2MB,
-                2 => PageTableLevel::Level4KB,
-                _ => unreachable!(),
-            };
-
-            return Some(AddressTranslation {
-                guest_pa,
-                pte_addr,
-                pte_value: pte,
-                level,
-            });
-        } else {
-            page_table = (pte >> 10) << 12;
+pub fn translate_guest_address(guest_memory: &MemoryRegion, root_page_table: u64, addr: u64)
+                               -> Option<AddressTranslation> {
+    walk_page_table(root_page_table, addr, |pa| guest_memory.get(pa)).map(|t| {
+        AddressTranslation {
+            pte_value: t.path[t.path.len() - 1].value,
+            pte_addr: t.path[t.path.len() - 1].addr,
+            level: t.path[t.path.len() - 1].level,
+            guest_pa: t.pa,
         }
-    }
-
-    None
+    })
+}
+pub fn translate_host_address(addr: u64) -> Option<PageTableWalk> {
+    // The currently installed page table should always have all of its pages mapped in the direct
+    // map region, thus deferencing pointers during a page table walk should always be safe.
+    let root_page_table = (csrr!(satp) & riscv::bits::SATP_PPN) << 12;
+    walk_page_table(root_page_table, addr, |pa| Some(unsafe { *(pa2va(pa) as *const u64) }))
 }
 
 pub unsafe fn init(hart_base_pa: u64, shared_segments_shift: u64, machine: &MachineMeta) -> (PageTables, MemoryRegion, u64) {

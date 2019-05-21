@@ -212,7 +212,7 @@ pub fn strap() {
                 }
                 state.saved_registers.set(i.rd(), prev);
             }
-            Some(Instruction::Wfi) => riscv::wfi(),
+            Some(Instruction::Wfi) => {}
             Some(decoded) => {
                 println!("Unrecognized instruction! {:?} @ pc={:#x}", decoded, pc);
                 forward_exception(&mut state, cause, pc);

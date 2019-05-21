@@ -141,8 +141,7 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
         if single_hart {
             hart_entry2(hartid);
         } else {
-            unimplemented!()
-            // riscv::sbi::send_ipi_to_hart(hart.hartid);
+            riscv::sbi::send_ipi_to_hart(hart.hartid);
         }
 
         guestid += 1;
@@ -174,15 +173,11 @@ unsafe fn hart_entry3(hartid: u64, device_tree_blob: u64, shared_segments_shift:
 #[no_mangle]
 unsafe fn hart_entry4(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64,
                       hart_base_pa: u64, guestid: u64) {
-    csrw!(sscratch, 0);
     csrw!(stvec, trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
     csrs!(sstatus, riscv::bits::STATUS_SUM);
     csrc!(sstatus, riscv::bits::STATUS_SPP);
-    csrc!(sstatus, riscv::bits::STATUS_SIE);
-    csrs!(sstatus, riscv::bits::STATUS_SPIE);
-    csrw!(scounteren, 0xffffffff);
-    // riscv::sbi::clear_ipi();
+    riscv::sbi::clear_ipi();
 
     let guestid = if guestid == u64::max_value() {
         None

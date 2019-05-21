@@ -130,7 +130,7 @@ sbi_send_ipi:
 	srli t0, t0, 1
 	beqz t1, 1b
 	sw t1, 0(t2)
-	bnez t1, 1b
+	bnez t0, 1b
 
 	li a0, 0
 	j return_with_value
