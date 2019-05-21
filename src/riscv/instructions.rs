@@ -1,82 +1,69 @@
 
 use crate::riscv::bits::STATUS_FS;
 
-/** atomic read from CSR */
+/// atomic read from CSR
 #[macro_export]
 macro_rules! csrr {
-    ( $r:ident ) => {
-        {
-            let value: u64;
-            #[allow(unused_unsafe)]
-            unsafe { asm!("csrr $0, $1" : "=r"(value) : "i"(crate::riscv::csr::$r)) };
-            value
-        }
-    };
+    ( $r:ident ) => {{
+        let value: u64;
+        #[allow(unused_unsafe)]
+        unsafe { asm!("csrr $0, $1" : "=r"(value) : "i"(crate::riscv::csr::$r)) };
+        value
+    }};
 }
 
-/** atomic write to CSR */
+/// atomic write to CSR
 #[macro_export]
 macro_rules! csrw {
-    ( $r:ident, $x:expr ) => {
-        {
-            let x: u64 = $x;
-            asm!("csrw $0, $1" :: "i"(crate::riscv::csr::$r), "r"(x));
-        }
-    };
+    ( $r:ident, $x:expr ) => {{
+        let x: u64 = $x;
+        asm!("csrw $0, $1" :: "i"(crate::riscv::csr::$r), "r"(x) :: "volatile");
+    }};
 }
 
-/** atomic write to CSR from immediate */
+/// atomic write to CSR from immediate
 #[macro_export]
 macro_rules! csrwi {
-    ( $r:ident, $x:expr ) => {
-        {
-            const X: u64 = $x;
-            asm!("li t0, $1
-                  csrw $0, t0"
-                 :
-                 : "i"(crate::riscv::csr::$r), "i"(X)
-                 : "t0"
-                 : "volatile");
-        }
-    };
+    ( $r:ident, $x:expr ) => {{
+        const X: u64 = $x;
+        asm!("csrwi $0, $1" :: "i"(crate::riscv::csr::$r), "i"(X) :: "volatile");
+    }};
 }
 
-/** atomic read and set bits in CSR */
+/// atomic read and set bits in CSR
 #[macro_export]
 macro_rules! csrs {
-    ( $r:ident, $x:expr ) => {
-        {
-            let x: u64 = $x;
-            asm!("csrs $0, $1" :: "i"(crate::riscv::csr::$r), "r"(x));
-        }
-    };
+    ( $r:ident, $x:expr ) => {{
+        let x: u64 = $x;
+        asm!("csrs $0, $1" :: "i"(crate::riscv::csr::$r), "r"(x) :: "volatile");
+    }};
 }
 
-/** atomic read and set bits in CSR using immediate */
+/// atomic read and set bits in CSR using immediate
 #[macro_export]
 macro_rules! csrsi {
-    ( $r:ident, $x:expr ) => {
-        {
-            const X: u64 = $x;
-            asm!("li t0, $1
-                  csrs $0, t0"
-                 :
-                 : "i"(crate::riscv::csr::$r), "i"(X)
-                 : "t0"
-                 : "volatile");
-        }
-    };
+    ( $r:ident, $x:expr ) => {{
+        const X: u64 = $x;
+        asm!("csrsi $0, $1" :: "i"(crate::riscv::csr::$r), "i"(X) :: "volatile");
+    }};
 }
 
-/** atomic read and clear bits in CSR */
+/// atomic read and clear bits in CSR
 #[macro_export]
 macro_rules! csrc {
-    ( $r:ident, $x:expr ) => {
-        {
-            let x: u64 = $x;
-            asm!("csrc $0, $1" :: "i"(crate::riscv::csr::$r), "r"(x));
-        }
-    };
+    ( $r:ident, $x:expr ) => {{
+        let x: u64 = $x;
+        asm!("csrc $0, $1" :: "i"(crate::riscv::csr::$r), "r"(x) :: "volatile");
+    }};
+}
+
+/// atomic read and clear bits in CSR using immediate
+#[macro_export]
+macro_rules! csrci {
+    ( $r:ident, $x:expr ) => {{
+        const X: u64 = $x;
+        asm!("csrci $0, $1" :: "i"(crate::riscv::csr::$r), "i"(X) :: "volatile");
+    }};
 }
 
 pub fn sfence_vma() {
