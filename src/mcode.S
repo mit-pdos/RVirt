@@ -54,7 +54,15 @@ unknown_cause:
 	j unknown_cause
 
 msoftware_interrupt:
-	j msoftware_interrupt
+	csrsi mip, 0x2 // mip.ssip = 1
+
+	csrr t0, mhartid
+	slli t0, t0, 2
+	li t1, 0x2000000
+	add t1, t0, t1
+	sw zero, 0(t1)  // mtimecmp[hartid] = zero
+
+	j return
 
 mtimer_interrupt:
 	li t0, 0x20
@@ -86,10 +94,10 @@ ecall_exception:
 	beqz a7, sbi_set_timer
 
 	li t1, 3
-	beq a7, t1, sbi_send_ipi
+	beq a7, t1, sbi_clear_ipi
 
 	li t1, 4
-	beq a7, t1, sbi_clear_ipi
+	beq a7, t1, sbi_send_ipi
 
 	li t1, 8
 	beq a7, t1, sbi_shutdown
@@ -106,18 +114,33 @@ sbi_set_timer:
 	li t0, 0x20
 	csrc mip, t0 // mip.stip = 0
 
-	j return
-
-sbi_send_ipi:
-	j return // TODO
+	li a0, 0
+	j return_with_value
 
 sbi_clear_ipi:
-	j return // TODO
+	csrci mip, 0x2
+	li a0, 0
+	j return_with_value
+
+sbi_send_ipi:
+	ld t0, 0(a0)
+	li t2, (0x02000000 - 4)
+1:	addi t2, t2, 4
+	andi t1, t0, 0x1
+	srli t0, t0, 1
+	beqz t1, 1b
+	sw t1, 0(t2)
+	bnez t1, 1b
+
+	li a0, 0
+	j return_with_value
 
 sbi_shutdown:
 	j sbi_shutdown
 
 return:
+	ld a0, 64(sp)
+return_with_value:
 	ld ra, 0(sp)
 	ld t0, 8(sp)
 	ld t1, 16(sp)
@@ -126,7 +149,6 @@ return:
 	ld t4, 40(sp)
 	ld t5, 48(sp)
 	ld t6, 56(sp)
-	ld a0, 64(sp)
 	ld a1, 72(sp)
 	ld a2, 80(sp)
 	ld a3, 88(sp)
@@ -135,32 +157,5 @@ return:
 	ld a6, 112(sp)
 	ld a7, 120(sp)
 	addi sp, sp, 128
-	csrrw sp, 0x340, sp // mscratch
+	csrrw sp, mscratch, sp
 	mret
-
-// This trap handler is set for harts that do not yet have guest VM running on
-// them. Once hart 0 has initialized all necessary state for a VM, it sends a
-// software interrupt which will cause this trap handler to run. This handler
-// installs a new trap handler and then calls into the S-mode hypervisor code.
-.align 4
-start_hart:
-	csrr t0, mcause
-	li t1, 0x8000000000000003
-	bne t0, t1, unknown_cause
-
-	// Install new mtvec
-	LOAD_ADDRESS t0, mtrap_entry
-	csrw mtvec, t0
-
-	// Set msip = 0
-	csrr a0, mhartid
-	li t0, 0x02000000
-	slli t1, a0, 2
-	add t0, t0, t1
-	sw zero, 0(t0)
-
-	// Set mstatus.mpp[1] = 0
-	li t0, 0x1000
-	csrc mstatus, t0
-
-	call handle_ipi

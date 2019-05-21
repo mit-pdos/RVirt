@@ -66,60 +66,33 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
 
     pmp::install_pmp_allmem(7, pmp::READ | pmp::WRITE | pmp::EXEC);
 
-    if SHARED_STATICS.hart_lottery.swap(false,  Ordering::SeqCst) {
-        asm!("LOAD_ADDRESS t0, mtrap_entry
+    asm!("LOAD_ADDRESS t0, mtrap_entry
               csrw mtvec, t0"
-             ::: "t0"  : "volatile");
+         ::: "t0"  : "volatile");
 
-        print::early_guess_uart();
+    print::early_guess_uart();
 
-        // // Text segment
-        // pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
-        // // Shared data segment
-        // pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 0x200000);
+    // // Text segment
+    // pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
+    // // Shared data segment
+    // pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 0x200000);
 
-        // pmp::debug_pmp();
-        // pagedebug::debug_paging();
+    // pmp::debug_pmp();
+    // pagedebug::debug_paging();
 
-        // See https://github.com/rust-lang/rust/issues/60392. Until that is fixed, we work around
-        // the issue by using the `gp` and `tp` registers as temporaries (the ABI prohibits Rust
-        // from passing arguments in them).
-        asm!("mv gp, $1
-              mv tp, $0
-              mv a0, gp
-              mv a1, tp
-              li t0, $2
-              mret" :: "r"(device_tree_blob), "r"(hartid), "i"(SYMBOL_PA2VA_OFFSET) : "a0", "a1", "gp", "tp", "t0" : "volatile");
-    } else  {
-        asm!("LOAD_ADDRESS t0, start_hart
-             csrw mtvec, t0"
-             ::: "t0"  : "volatile");
-        csrsi!(mstatus, 0x8); //MIE
-        loop {}
-    }
-}
-
-#[no_mangle]
-pub unsafe fn handle_ipi() {
-    let hartid = csrr!(mhartid);
-    let reason = { SHARED_STATICS.ipi_reason_array.get_unchecked(hartid as usize).lock().take() };
-
-    match reason {
-        Some(IpiReason::EnterSupervisor{ a0, a1, a2, a3, a4, sp, satp, mepc}) => {
-            csrw!(mepc, mepc);
-            csrw!(satp, satp);
-            asm!("mv a0, $0
-                  mv a1, $1
-                  mv a2, $2
-                  mv a3, $3
-                  mv a4, $4
-                  mv sp, $5
-                  mret" :: "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(sp) : "a0", "a1", "a2", "a3", "a4", "sp" : "volatile");
-        }
-        None => {
-            machdebug::machine_debug_abort("Got IPI but reason wasn't specified?");
-        }
-    }
+    // See https://github.com/rust-lang/rust/issues/60392. Until that is fixed, we work around
+    // the issue by using the `gp` and `tp` registers as temporaries (the ABI prohibits Rust
+    // from passing arguments in them).
+    asm!("mv gp, $1
+          mv tp, $0
+          mv a0, gp
+          mv a1, tp
+          li t0, $2
+          mret"
+         :
+         : "r"(device_tree_blob), "r"(hartid), "i"(SYMBOL_PA2VA_OFFSET)
+         : "a0", "a1", "gp", "tp", "t0"
+         : "volatile");
 }
 
 #[no_mangle]

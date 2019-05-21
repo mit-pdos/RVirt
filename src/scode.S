@@ -55,3 +55,9 @@ trampoline:
 	jr t0
 
 	call jump_to_sstart
+
+.align 3
+.globl hart_entry
+hart_entry:
+	csrr a0, sscratch
+	j hart_entry2

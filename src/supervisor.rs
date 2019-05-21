@@ -32,10 +32,22 @@ static GUEST_KERNEL: [u8; 0] = [];
 
 global_asm!(include_str!("scode.S"));
 
+extern { fn hart_entry(); }
+
 //#[naked]
 #[no_mangle]
 #[inline(never)]
 unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64) {
+    if !SHARED_STATICS.hart_lottery.swap(false,  Ordering::SeqCst) {
+        csrw!(sscratch, hartid);
+        csrw!(stvec, hart_entry as u64);
+        csrw!(sie, 0x222);
+        csrsi!(sstatus, riscv::bits::STATUS_SIE);
+        loop {
+            riscv::wfi();
+        }
+    }
+
     csrw!(stvec, (||{
         println!("scause={:x}", csrr!(scause));
         println!("sepc={:x}", csrr!(sepc));
@@ -115,7 +127,7 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
                             (machine.initrd_end - machine.initrd_start) as usize);
         }
 
-        let reason = IpiReason::EnterSupervisor {
+        let reason = IpiReason::TriggerHartEntry {
             a0: hart.hartid,
             a1: hart_base_pa + 4096*2,
             a2: shared_segments_shift,
@@ -123,25 +135,14 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
             a4: if !single_guest { guestid as u64 } else { u64::max_value() },
             sp: hart_base_pa + (4<<20) + pmap::DIRECT_MAP_OFFSET,
             satp: 8 << 60 | (hart_base_pa >> 12),
-            mepc: hart_entry as u64,
         };
 
+        *SHARED_STATICS.ipi_reason_array[hart.hartid as usize].lock() = Some(reason);
         if single_hart {
-            match reason {
-                IpiReason::EnterSupervisor { a0, a1, a2, a3, a4, sp, satp, mepc: _ } => {
-                    csrw!(satp, satp);
-                    hart_entry(a0, a1, a2, a3, a4, sp);
-                }
-            }
+            hart_entry2(hartid);
         } else {
-            // Send IPI
-            *SHARED_STATICS.ipi_reason_array[hart.hartid as usize].lock() = Some(reason);
-            match machine.clint_address {
-                Some(address) => *(pa2va(address + hart.hartid*4) as *mut u32) = 1,
-                None => {
-                    unimplemented!()
-                }
-            }
+            unimplemented!()
+            // riscv::sbi::send_ipi_to_hart(hart.hartid);
         }
 
         guestid += 1;
@@ -150,21 +151,38 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
     loop {}
 }
 
+#[no_mangle]
+unsafe fn hart_entry2(hartid: u64) {
+    let reason = { SHARED_STATICS.ipi_reason_array.get_unchecked(hartid as usize).lock().take() };
+    if let Some(IpiReason::TriggerHartEntry { a0, a1, a2, a3, a4, sp, satp }) = reason {
+        csrw!(satp, satp);
+        hart_entry3(a0, a1, a2, a3, a4, sp);
+    } else {
+        unreachable!();
+    }
+}
 
 #[naked]
 #[no_mangle]
 #[inline(never)]
-unsafe fn hart_entry(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64, hart_base_pa: u64, guestid: u64, stack_pointer: u64) {
-    asm!("mv sp, $0
-          j hart_entry2" :: "r"(stack_pointer) :: "volatile");
+unsafe fn hart_entry3(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64,
+                      hart_base_pa: u64, guestid: u64, stack_pointer: u64) {
+    asm!("mv sp, a5
+          j hart_entry4" :::: "volatile");
 }
 
 #[no_mangle]
-unsafe fn hart_entry2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64, hart_base_pa: u64, guestid: u64) {
+unsafe fn hart_entry4(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64,
+                      hart_base_pa: u64, guestid: u64) {
+    csrw!(sscratch, 0);
     csrw!(stvec, trap::strap_entry as *const () as u64);
     csrw!(sie, 0x222);
     csrs!(sstatus, riscv::bits::STATUS_SUM);
     csrc!(sstatus, riscv::bits::STATUS_SPP);
+    csrc!(sstatus, riscv::bits::STATUS_SIE);
+    csrs!(sstatus, riscv::bits::STATUS_SPIE);
+    csrw!(scounteren, 0xffffffff);
+    // riscv::sbi::clear_ipi();
 
     let guestid = if guestid == u64::max_value() {
         None

@@ -7,7 +7,7 @@ use crate::pmap;
 
 #[derive(Copy, Clone, Debug)]
 pub enum IpiReason {
-    EnterSupervisor {
+    TriggerHartEntry {
         a0: u64,
         a1: u64,
         a2: u64,
@@ -15,7 +15,6 @@ pub enum IpiReason {
         a4: u64,
         sp: u64,
         satp: u64,
-        mepc: u64,
     }
 }
 
