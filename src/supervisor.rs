@@ -91,6 +91,8 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
     let single_guest = guest_harts.len() == 1;
     assert!(guest_harts.len() != 0);
 
+    assert!(1 + guest_harts.len() as u64 <= (machine.physical_memory_size >> 30));
+
     let mut guestid = 1;
     for hart in guest_harts {
         let hart_base_pa = machine.physical_memory_offset + pmap::HART_SEGMENT_SIZE * guestid;
