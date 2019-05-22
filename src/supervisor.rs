@@ -32,15 +32,15 @@ static GUEST_KERNEL: [u8; 0] = [];
 
 global_asm!(include_str!("scode.S"));
 
-extern { fn hart_entry(); }
-
 //#[naked]
 #[no_mangle]
 #[inline(never)]
 unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64) {
+    csrci!(sstatus, riscv::bits::STATUS_SIE);
     if !SHARED_STATICS.hart_lottery.swap(false,  Ordering::SeqCst) {
-        csrw!(sscratch, hartid);
+        extern { fn hart_entry(); }
         csrw!(stvec, hart_entry as u64);
+        csrw!(sscratch, hartid);
         csrw!(sie, 0x222);
         csrsi!(sstatus, riscv::bits::STATUS_SIE);
         loop {

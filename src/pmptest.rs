@@ -25,7 +25,7 @@ pub unsafe fn pmptest_mstart(hartid: u64, device_tree_blob: u64) {
          ::: "t0"  : "volatile");
 
     // Minimal page table to boot into S mode.
-    let boot_page_table_pa = SHARED_STATICS.boot_page_table.as_ptr() as u64;
+    let boot_page_table_pa = SHARED_STATICS.boot_page_tables[0].as_ptr() as u64;
     *((boot_page_table_pa) as *mut u64) = 0x00000000 | 0xcf;
     *((boot_page_table_pa+16) as *mut u64) = 0x20000000 | 0xcf;
     *((boot_page_table_pa+4088) as *mut u64) = 0x20000000 | 0xcf;

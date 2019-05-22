@@ -7,45 +7,54 @@ jump_to_sstart:
 .globl sstart
 .section .text.entrypoint
 sstart:
-	// a2 = real physical address of sstart
+	// a2 = offset all code/data is shifted by ("shared_segment_shift")
 	auipc a2, 0
+	li t0, 0x80100000 // = SUPERVISOR_START_ADDRESS - SYMBOL_PA2VA_OFFSET
+	sub a2, a2, t0
 
-	// t1 = offset all code/data is shifted by
-	li t1, 0x80100000 // = SUPERVISOR_START_ADDRESS - SYMBOL_PA2VA_OFFSET
-	sub a2, a2, t1
-
-	// initialize stack pointer
+	// sp = M_MODE_STACK_BASE + hartid * M_MODE_STACK_STRIDE
 	li sp, 0x80810000 // = M_MODE_STACK_BASE
-	li t2, 0x10000    // = M_MODE_STACK_STRIDE
-	mul t0, a0, t2
+	li t0, 0x10000    // = M_MODE_STACK_STRIDE
+	mul t0, t0, a0
     add sp, sp, t0
 
-	li t2, 0xffffffff40000000 // = SYMBOL_PA2VA_OFFSET
-	add sp, sp, t2
+	// sp = pa2va(sp)
+	li t0, 0xffffffff40000000 // = SYMBOL_PA2VA_OFFSET
+	add sp, sp, t0
 
-	// initialize and install page table
-	srli t2, a2, 21
-	slli t2, t2, 19
-	li s5, 0x80200000 + 511 * 8
-	li s6, 0x80200000 + 1024 * 8
-	add s5, s5, a2
-	add s6, s6, a2
-1:  ld s0, 0(s5)
-	add s0, s0, t2
-	sd s0, 0(s5)
+	// s4 = &boot_page_tables[hartid][0]
+	li s4, 0x80200000 // s4 = 0x80200000
+	add s4, s4, a2    //      + shared_segment_shift
+	slli t0, a0, 10
+	add s4, s4, t0    //      + 1024 * hartid
+
+	// s5 = &boot_page_tables[hartid][511]
+	li s5, 511 * 8
+	add s5, s5, s4
+
+	// s6 = &boot_page_tables[hartid][1024]
+	li s6, 1024 * 8
+	add s6, s6, s4
+
+	// boot_page_tables[hartid][511..1024] += shared_segment_shift >> 2
+	srli t0, a2, 21
+	slli t0, t0, 19
+1:  ld t1, 0(s5)
+	add t1, t1, t0
+	sd t1, 0(s5)
 	addi s5, s5, 8
 	blt s5, s6, 1b
 
-	// Set trap vector to trampoline
+	// stvec = trampoline
 	lui t0, %hi(trampoline)
 	addi t0, t0, %lo(trampoline)
 	csrw stvec, t0
 
-	// set satp
-	li s4, (8 << 60 | 0x80200000 >> 12)
-	srli t1, a2, 12
-	add s4, s4, t1
-	csrw satp, s4
+	// satp = &boot_page_tables[hartid][0] | 8 << 60
+	srli t0, s4, 12
+	li t1, 8 << 60
+	or t0, t0, t1
+	csrw satp, t0
 	sfence.vma
 
 .align 3
@@ -54,6 +63,7 @@ trampoline:
 	addi t0, t0, %lo(sstart2)
 	jr t0
 
+	// unreachable, but makes sure that jump_to_sstart isn't optimized out.
 	call jump_to_sstart
 
 .align 3

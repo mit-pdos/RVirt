@@ -1,4 +1,4 @@
-
+use arr_macro::arr;
 use core::sync::atomic::AtomicBool;
 use spin::Mutex;
 use crate::constants::*;
@@ -20,9 +20,9 @@ pub enum IpiReason {
 
 #[repr(C,align(4096))]
 pub struct Shared {
-    pub boot_page_table: [u64; 1024],
-    pub uart_writer: Mutex<UartWriter>,
+    pub boot_page_tables: [[u64; 1024]; MAX_HOST_HARTS],
     pub ipi_reason_array: [Mutex<Option<IpiReason>>; MAX_HOST_HARTS],
+    pub uart_writer: Mutex<UartWriter>,
     pub hart_lottery: AtomicBool,
 }
 
@@ -43,9 +43,13 @@ impl core::ops::Deref for ConditionalPointer {
     }
 }
 
+const fn make_boot_page_tables_array() -> [[u64; 1024]; MAX_HOST_HARTS] {
+    const base: u64 = MACHINE_SHARED_STATIC_ADDRESS;
+    const stride: u64 = 1024 * 8;
 
-
-const MR: Mutex<Option<IpiReason>> = Mutex::new(None);
+    let mut i = 0;
+    arr![pmap::make_boot_page_table({i += 1; base + (i - 1) * stride}); 16]
+}
 
 /// This static is never accessed directly, but is needed so that the memory backing SHARED_STATICS
 /// is properly initialized.
@@ -56,12 +60,12 @@ const MR: Mutex<Option<IpiReason>> = Mutex::new(None);
 /// addresses.
 #[link_section = ".shared.data"]
 pub static __SHARED_STATICS_IMPL: Shared = Shared {
-    boot_page_table: pmap::make_boot_page_table(MACHINE_SHARED_STATIC_ADDRESS),
+    boot_page_tables: make_boot_page_tables_array(),
+    ipi_reason_array: arr![Mutex::new(None); 16],
     // see also: print::early_guess_uart
     uart_writer: Mutex::new(UartWriter {
         pa: 0x10000000,
         inner: print::UartWriterInner::Ns16550a { initialized: false },
     }),
-    ipi_reason_array: [MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR, MR,],
     hart_lottery: AtomicBool::new(true),
 };
