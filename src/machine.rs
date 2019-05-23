@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(asm)]
+#![feature(const_slice_len)]
 #![feature(const_str_len)]
 #![feature(global_asm)]
 #![feature(lang_items)]
@@ -28,7 +29,9 @@ const TEST_PMP: bool = false;
 const M_MODE_STACK_BASE: u64 = 0x80810000;
 const M_MODE_STACK_STRIDE: u64 = 0x10000;
 
-const SUPERVISOR_START_ADDRESS: u64 = 0xffffffffc0100000;
+#[link_section = ".payload"]
+static PAYLOAD: [u8; include_bytes!(concat!("../", env!("PAYLOAD"))).len()] =
+    *include_bytes!(concat!("../", env!("PAYLOAD")));
 
 global_asm!(include_str!("mcode.S"));
 
@@ -60,7 +63,7 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mie, 0x088);
     csrc!(mstatus, STATUS_MPP_M);
     csrs!(mstatus, STATUS_MPP_S);
-    csrw!(mepc, SUPERVISOR_START_ADDRESS - SYMBOL_PA2VA_OFFSET);
+    csrw!(mepc, PAYLOAD.as_ptr() as u64 - SYMBOL_PA2VA_OFFSET);
     csrw!(mcounteren, 0xffffffff);
     csrw!(mscratch, M_MODE_STACK_BASE + M_MODE_STACK_STRIDE * hartid);
 

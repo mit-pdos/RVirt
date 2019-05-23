@@ -13,13 +13,18 @@ SECTIONS
 
   . = ALIGN(0x1000);
   _rodata_pa = .;
-. += 0xffffffff40000000;
+  . += 0xffffffff40000000;
   .rodata.machine : AT(_rodata_pa)
   {
     *(.rdata) *(.rodata) *(.rodata.*)
     *(.gnu.linkonce.r.*)
     *(.srodata*)
     *(.comment)
+  }
+
+  . = ALIGN(0x200000);
+  .payload : {
+    *(.payload)
   }
 
   /DISCARD/ :

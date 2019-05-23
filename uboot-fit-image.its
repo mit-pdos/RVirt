@@ -7,7 +7,7 @@
         images {
                 rvirt {
                         description = "RVirt";
-                        data = /incbin/("target/riscv64imac-unknown-none-elf/release/rvirt.bin");
+                        data = /incbin/("target/riscv64imac-unknown-none-elf/release/rvirt-bare-metal.bin");
                         type = "kernel";
                         arch = "riscv";
                         os = "linux";

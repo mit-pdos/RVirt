@@ -1,23 +1,35 @@
-LD=riscv64-unknown-elf-ld
+OUT_DIR=target/riscv64imac-unknown-none-elf/release
+
+################################################################################
+#                               COMPILE BINARIES                               #
+################################################################################
 
 GUEST_KERNEL_FEATURE=$(if $(RVIRT_GUEST_KERNEL), --features embed_guest_kernel, )
 
-release: src/*.rs src/*.S Cargo.toml src/linker.ld
-	cargo rustc --release --target riscv64imac-unknown-none-elf --bin rvirt-supervisor $(GUEST_KERNEL_FEATURE) -- -C link-arg=-Tsrc/slinker.ld  -C linker=$(LD)
-	cargo rustc --release --target riscv64imac-unknown-none-elf --bin rvirt-machine --features "physical_symbol_addresses" -- -C link-arg=-Tsrc/mlinker.ld  -C linker=$(LD)
-	$(LD) -Tsrc/linker.ld target/riscv64imac-unknown-none-elf/release/rvirt-supervisor target/riscv64imac-unknown-none-elf/release/rvirt-machine -o target/riscv64imac-unknown-none-elf/release/rvirt
+# Build the main rvirt binary. Relies on an SBI inteface for some functionality.
+rvirt: src/*.rs src/*/*.rs src/*.S Cargo.toml src/slinker.ld
+	cargo rustc --release --target riscv64imac-unknown-none-elf --bin rvirt \
+	    $(GUEST_KERNEL_FEATURE) -- -C link-arg=-Tsrc/slinker.ld
+	objcopy -S -O binary --change-addresses -0x80000000 --set-section-flags \
+	    .bss=alloc,load,contents $(OUT_DIR)/rvirt $(OUT_DIR)/rvirt.bin
 
-binary: release
-	objcopy -S -O binary --change-addresses -0x80000000 --set-section-flags .bss=alloc,load,contents target/riscv64imac-unknown-none-elf/release/rvirt target/riscv64imac-unknown-none-elf/release/rvirt.bin
+# Build a free standing binary that can run directly on bare metal without any
+# SBI provider.
+rvirt-bare-metal: rvirt src/mlinker.ld
+	PAYLOAD=$(OUT_DIR)/rvirt.bin cargo rustc --release --target \
+	    riscv64imac-unknown-none-elf --bin rvirt-bare-metal --features \
+	    "physical_symbol_addresses" -- -C link-arg=-Tsrc/mlinker.ld
+	objcopy -S -O binary --change-addresses -0x80000000 \
+	    $(OUT_DIR)/rvirt-bare-metal $(OUT_DIR)/rvirt-bare-metal.bin
 
-# Requires atftpd with target directory set to /tftpboot
-fit: binary uboot-fit-image.its
-	mkimage -f uboot-fit-image.its -A riscv -O linux -T flat_dt target/riscv64imac-unknown-none-elf/release/rvirt.fit
-	cp target/riscv64imac-unknown-none-elf/release/rvirt.fit /srv/tftp/hifiveu.fit
+################################################################################
+#                              QEMU RUN COMMANDS                               #
+################################################################################
 
-# note: this maps rng -> virtio2, blk -> virtio1, net -> virtio0. see virtio-order.md for explanation.
-qemu: release
-	qemu-system-riscv64 -machine virt -kernel target/riscv64imac-unknown-none-elf/release/rvirt -nographic -initrd fedora-vmlinux -m 2G -smp 1 $(GDBOPTS) \
+# Run rvirt inside QEMU.
+qemu: rvirt-bare-metal
+	qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1 $(GDBOPTS) \
+	    -kernel $(OUT_DIR)/rvirt-bare-metal -initrd fedora-vmlinux \
 	    -append "console=ttyS0 ro root=/dev/vda" \
 	    -object rng-random,filename=/dev/urandom,id=rng1 \
 	    -device virtio-rng-device,rng=rng1,bus=virtio-mmio-bus.0 \
@@ -26,16 +38,42 @@ qemu: release
 	    -device virtio-net-device,netdev=usernet1,bus=virtio-mmio-bus.2 \
 	    -netdev user,id=usernet1,hostfwd=tcp::10001-:22
 
-qemu-sifive: release
-	qemu-system-riscv64 -machine sifive_u -kernel target/riscv64imac-unknown-none-elf/release/rvirt -nographic -initrd fedora-vmlinux -m 2G
+# Run rvirt inside QEMU with BBL as the SBI provider. Requires a build of QEMU
+# with support for the `-bios` flag which mainline QEMU doesn't yet have.
+qemu-bbl: rvirt
+	qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1 \
+	    -bios bbl -kernel $(OUT_DIR)/rvirt.bin -initrd fedora-vmlinux \
+	    -append "console=ttyS0 root=/dev/vda2" \
+	    -object rng-random,filename=/dev/urandom,id=rng1 \
+	    -device virtio-rng-device,rng=rng1,bus=virtio-mmio-bus.0 \
+	    -device virtio-blk-device,drive=hd1,bus=virtio-mmio-bus.1 \
+	    -drive file=img01.qcow2,format=qcow2,id=hd1 \
+	    -device virtio-net-device,netdev=usernet1,bus=virtio-mmio-bus.2 \
+	    -netdev user,id=usernet1,hostfwd=tcp::10001-:22
 
+# Run rvirt inside QEMU but target the sifive_u machine type.
+qemu-sifive: rvirt-bare-metal
+	qemu-system-riscv64 -machine sifive_u -nographic -m 2G \
+	    -kernel $(OUT_DIR)/rvirt-bare-metal
+
+
+# Run rvirt inside QEMU but wait for GDB to attach on port 26000 first.
 GDBOPTS=$(if $(DEBUG),-gdb tcp::26000 -S,)
-
-# to debug, run make qemu-gdb, and then run gdb
 qemu-gdb: DEBUG=1
 qemu-gdb: qemu
 
-# To get line endings to be correct, follow steps described on:
+################################################################################
+#                          HIFIVE UNLEASHED COMMANDS                           #
+################################################################################
+
+# Prepare a `.fit` file and place it in /srv/tftp so the HiFive Unleashed can
+# boot from it. Requires atftpd with target directory set to /srv/tftp/.
+fit: rvirt-bare-metal uboot-fit-image.its
+	mkimage -f uboot-fit-image.its -A riscv -O linux -T flat_dt $(OUT_DIR)/rvirt.fit
+	cp $(OUT_DIR)/rvirt.fit /srv/tftp/hifiveu.fit
+
+# Display serial output from the HiFive Unleashed. To get line endings to be
+# correct, follow steps described on:
 # https://unix.stackexchange.com/questions/283924/how-can-minicom-permanently-translate-incoming-newline-n-to-crlf
 serial-output:
 	sudo minicom -D /dev/serial/by-id/usb-FTDI_Dual_RS232-HS-if01-port0

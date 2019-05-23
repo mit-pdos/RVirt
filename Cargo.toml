@@ -16,12 +16,12 @@ arr_macro = { git = "https://github.com/fintelia/arr_macro" }
 debug = true
 
 [[bin]]
-name = "rvirt-machine"
+name = "rvirt-bare-metal"
 path = "src/machine.rs"
 required-features = ["physical_symbol_addresses"]
 
 [[bin]]
-name = "rvirt-supervisor"
+name = "rvirt"
 path = "src/supervisor.rs"
 
 [features]
