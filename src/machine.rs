@@ -80,19 +80,13 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     // pmp::debug_pmp();
     // pagedebug::debug_paging();
 
-    // See https://github.com/rust-lang/rust/issues/60392. Until that is fixed, we work around
-    // the issue by using the `gp` and `tp` registers as temporaries (the ABI prohibits Rust
-    // from passing arguments in them).
-    asm!("mv gp, $1
-          mv tp, $0
-          mv a0, gp
-          mv a1, tp
-          li t0, $2
-          mret"
-         :
-         : "r"(device_tree_blob), "r"(hartid), "i"(SYMBOL_PA2VA_OFFSET)
-         : "a0", "a1", "gp", "tp", "t0"
-         : "volatile");
+    enter_supervisor(hartid, device_tree_blob);
+}
+
+#[naked]
+#[inline(never)]
+unsafe fn enter_supervisor(_hartid: u64, _device_tree_blob: u64) {
+    asm!("mret" :::: "volatile");
 }
 
 #[no_mangle]
