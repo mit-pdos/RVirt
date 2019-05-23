@@ -123,7 +123,11 @@ sbi_clear_ipi:
 	j return_with_value
 
 sbi_send_ipi:
+	li t2, 1 << 17 // t2 = MPRV
+	csrrs t1, mstatus, t2
 	ld t0, 0(a0)
+	csrw mstatus, t1
+
 	li t2, (0x02000000 - 4)
 1:	addi t2, t2, 4
 	andi t1, t0, 0x1

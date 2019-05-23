@@ -24,8 +24,5 @@ pub fn shutdown() {
 
 pub fn send_ipi_to_hart(hart: u64) {
     let mask: u64 = 1 << hart;
-    let pa = pmap::translate_host_address(&mask as *const u64 as u64)
-        .expect("Unable to get physical address of stack value?").pa;
-
-    send_ipi(pa);
+    send_ipi(&mask as *const u64 as u64);
 }
