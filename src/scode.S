@@ -71,3 +71,8 @@ trampoline:
 hart_entry:
 	csrr a0, sscratch
 	j hart_entry2
+
+.align 3
+.globl panic_trap_handler
+panic_trap_handler:
+	call panic_trap_handler2

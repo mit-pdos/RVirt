@@ -32,13 +32,17 @@ static GUEST_KERNEL: [u8; 0] = [];
 
 global_asm!(include_str!("scode.S"));
 
+extern {
+    fn hart_entry();
+    fn panic_trap_handler();
+}
+
 //#[naked]
 #[no_mangle]
 #[inline(never)]
 unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64) {
     csrci!(sstatus, riscv::bits::STATUS_SIE);
     if !SHARED_STATICS.hart_lottery.swap(false,  Ordering::SeqCst) {
-        extern { fn hart_entry(); }
         csrw!(stvec, hart_entry as u64);
         csrw!(sscratch, hartid);
         csrw!(sie, 0x222);
@@ -48,11 +52,7 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
         }
     }
 
-    csrw!(stvec, (||{
-        println!("scause={:x}", csrr!(scause));
-        println!("sepc={:x}", csrr!(sepc));
-        panic!("Trap on dom0 hart?!")
-    }) as fn() as *const () as u64);
+    csrw!(stvec, panic_trap_handler as *const () as u64);
 
     // Read and process host FDT.
     let mut fdt = Fdt::new(pa2va(device_tree_blob));
@@ -254,4 +254,11 @@ unsafe fn hart_entry4(hartid: u64, device_tree_blob: u64, shared_segments_shift:
           sret" :: "r"(guest_dtb) : "memory" : "volatile");
 
     unreachable!();
+}
+
+#[no_mangle]
+fn panic_trap_handler2() {
+    println!("scause={}", csrr!(scause) as isize);
+    println!("sepc={:x}", csrr!(sepc));
+    panic!("Got unexpected trap, panicking...");
 }
