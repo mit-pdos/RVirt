@@ -4,13 +4,7 @@ ENTRY( sstart )
 SECTIONS
 {
   . = 0xffffffffc0000000;
-  .text.jump : AT(0x80000000)
-  {
-	*(.text.jump)
-  }
-
-  . = 0xffffffffc0100000;
-  .text.supervisor : AT(0x80100000)
+  .text.supervisor : AT(0x80000000)
   {
     *(.text.entrypoint)
     *(.text) *(.text.*)

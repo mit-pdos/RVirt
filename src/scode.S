@@ -1,15 +1,9 @@
-.globl jump_to_sstart
-.section .text.jump
-jump_to_sstart:
-	auipc t0, (0x100000 >> 12)
-	jr t0
-
 .globl sstart
 .section .text.entrypoint
 sstart:
 	// a2 = offset all code/data is shifted by ("shared_segment_shift")
 	auipc a2, 0
-	li t0, 0x80100000 // = SUPERVISOR_START_ADDRESS - SYMBOL_PA2VA_OFFSET
+	li t0, 0x80000000 // = SUPERVISOR_START_ADDRESS - SYMBOL_PA2VA_OFFSET
 	sub a2, a2, t0
 
 	// sp = M_MODE_STACK_BASE + hartid * M_MODE_STACK_STRIDE
@@ -62,9 +56,6 @@ trampoline:
 	lui t0, %hi(sstart2)
 	addi t0, t0, %lo(sstart2)
 	jr t0
-
-	// unreachable, but makes sure that jump_to_sstart isn't optimized out.
-	call jump_to_sstart
 
 .align 3
 .globl hart_entry
