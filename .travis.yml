@@ -9,7 +9,7 @@ cache:
 
 install:
   - export PATH="$PATH:$HOME/.cargo/bin"
-  - rustup target add $TARGET || true
+  - rustup target add riscv64imac-unknown-none-elf || true
 
 before_script:
   - bash -e third_party/travis-qemu.sh
