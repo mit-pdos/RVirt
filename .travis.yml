@@ -5,8 +5,10 @@ rust:
 
 cache:
   - apt
+  - cargo
   - directories:
     - $HOME/qemu
+    - $HOME/fedora-images
 
 install:
   - export PATH="$PATH:$HOME/.cargo/bin"
@@ -15,11 +17,29 @@ install:
 before_script:
   - bash -e third_party/travis-qemu.sh
   - export PATH=$PATH:$HOME/qemu/bin
+  - |
+      mkdir -p $HOME/fedora-images
+	  cd $HOME/fedora-images
+	  wget -N https://fedorapeople.org/groups/risc-v/disk-images/vmlinux
+	  wget -N https://fedorapeople.org/groups/risc-v/disk-images/stage4-disk.img.xz
+	  unxz stage4-disk.img.xz
+	  chmod -w stage4-disk.img
 
 script:
   - make target/riscv64imac-unknown-none-elf/release/rvirt
   - make target/riscv64imac-unknown-none-elf/release/rvirt-bare-metal
-  - make qemu
+  - >
+      qemu-img create -f qcow2 -b $HOME/fedora-images/stage4-disk.img -F raw img01.qcow2 &&
+      qemu qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1
+        -kernel target/riscv64imac-unknown-none-elf/release/rvirt-bare-metal
+		-initrd $HOME/fedora-images/vmlinux
+        -append "console=ttyS0 root=/dev/vda"
+        -object rng-random,filename=/dev/urandom,id=rng1
+        -device virtio-rng-device,rng=rng1,bus=virtio-mmio-bus.0
+        -device virtio-blk-device,drive=hd1,bus=virtio-mmio-bus.1
+        -drive file=img01.qcow2,format=qcow2,id=hd1
+        -device virtio-net-device,netdev=usernet1,bus=virtio-mmio-bus.2
+        -netdev user,id=usernet1,hostfwd=tcp::10001-:22
 
 notifications:
   email:
