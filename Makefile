@@ -1,4 +1,4 @@
-OUT_DIR=target/riscv64imac-unknown-none-elf/release
+OUT=target/riscv64imac-unknown-none-elf/release
 
 ################################################################################
 #                               COMPILE BINARIES                               #
@@ -7,29 +7,35 @@ OUT_DIR=target/riscv64imac-unknown-none-elf/release
 GUEST_KERNEL_FEATURE=$(if $(RVIRT_GUEST_KERNEL), --features embed_guest_kernel, )
 
 # Build the main rvirt binary. Relies on an SBI inteface for some functionality.
-rvirt: src/*.rs src/*/*.rs src/*.S Cargo.toml src/slinker.ld
+$(OUT)/rvirt: src/*.rs src/*/*.rs src/*.S Cargo.toml src/slinker.ld
 	cargo rustc --release --target riscv64imac-unknown-none-elf --bin rvirt \
 	    $(GUEST_KERNEL_FEATURE) -- -C link-arg=-Tsrc/slinker.ld
+
+# Flattened version of rvirt binary.
+$(OUT)/rvirt.bin: $(OUT)/rvirt
 	objcopy -S -O binary --change-addresses -0x80000000 --set-section-flags \
-	    .bss=alloc,load,contents $(OUT_DIR)/rvirt $(OUT_DIR)/rvirt.bin
+	    .bss=alloc,load,contents $(OUT)/rvirt $(OUT)/rvirt.bin
 
 # Build a free standing binary that can run directly on bare metal without any
 # SBI provider.
-rvirt-bare-metal: rvirt src/mlinker.ld
-	PAYLOAD=$(OUT_DIR)/rvirt.bin cargo rustc --release --target \
+$(OUT)/rvirt-bare-metal: $(OUT)/rvirt.bin src/mlinker.ld
+	PAYLOAD=$(OUT)/rvirt.bin cargo rustc --release --target \
 	    riscv64imac-unknown-none-elf --bin rvirt-bare-metal --features \
 	    "physical_symbol_addresses" -- -C link-arg=-Tsrc/mlinker.ld
+
+# Flattened version of rvirt-bare-metal binary.
+$(OUT)/rvirt-bare-metal.bin: $(OUT)/rvirt-bare-metal
 	objcopy -S -O binary --change-addresses -0x80000000 \
-	    $(OUT_DIR)/rvirt-bare-metal $(OUT_DIR)/rvirt-bare-metal.bin
+	    $(OUT)/rvirt-bare-metal $(OUT)/rvirt-bare-metal.bin
 
 ################################################################################
 #                              QEMU RUN COMMANDS                               #
 ################################################################################
 
 # Run rvirt inside QEMU.
-qemu: rvirt-bare-metal
-	qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1 $(GDBOPTS) \
-	    -kernel $(OUT_DIR)/rvirt-bare-metal -initrd fedora-vmlinux \
+qemu: $(OUT)/rvirt-bare-metal
+	~/git/qemu/build/riscv64-softmmu/qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1 $(GDBOPTS) \
+	    -kernel $(OUT)/rvirt-bare-metal -initrd fedora-vmlinux \
 	    -append "console=ttyS0 ro root=/dev/vda" \
 	    -object rng-random,filename=/dev/urandom,id=rng1 \
 	    -device virtio-rng-device,rng=rng1,bus=virtio-mmio-bus.0 \
@@ -40,9 +46,9 @@ qemu: rvirt-bare-metal
 
 # Run rvirt inside QEMU with BBL as the SBI provider. Requires a build of QEMU
 # with support for the `-bios` flag which mainline QEMU doesn't yet have.
-qemu-bbl: rvirt
-	qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1 \
-	    -bios bbl -kernel $(OUT_DIR)/rvirt.bin -initrd fedora-vmlinux \
+qemu-bbl: $(OUT)/rvirt.bin
+	~/git/qemu/build/riscv64-softmmu/qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1 \
+	    -bios bbl -kernel $(OUT)/rvirt.bin -initrd fedora-vmlinux \
 	    -append "console=ttyS0 root=/dev/vda2" \
 	    -object rng-random,filename=/dev/urandom,id=rng1 \
 	    -device virtio-rng-device,rng=rng1,bus=virtio-mmio-bus.0 \
@@ -52,10 +58,9 @@ qemu-bbl: rvirt
 	    -netdev user,id=usernet1,hostfwd=tcp::10001-:22
 
 # Run rvirt inside QEMU but target the sifive_u machine type.
-qemu-sifive: rvirt-bare-metal
+qemu-sifive: $(OUT)/rvirt-bare-metal
 	qemu-system-riscv64 -machine sifive_u -nographic -m 2G \
-	    -kernel $(OUT_DIR)/rvirt-bare-metal
-
+	    -kernel $(OUT)/rvirt-bare-metal
 
 # Run rvirt inside QEMU but wait for GDB to attach on port 26000 first.
 GDBOPTS=$(if $(DEBUG),-gdb tcp::26000 -S,)
@@ -68,9 +73,9 @@ qemu-gdb: qemu
 
 # Prepare a `.fit` file and place it in /srv/tftp so the HiFive Unleashed can
 # boot from it. Requires atftpd with target directory set to /srv/tftp/.
-fit: rvirt-bare-metal uboot-fit-image.its
-	mkimage -f uboot-fit-image.its -A riscv -O linux -T flat_dt $(OUT_DIR)/rvirt.fit
-	cp $(OUT_DIR)/rvirt.fit /srv/tftp/hifiveu.fit
+fit: $(OUT)/rvirt-bare-metal.bin uboot-fit-image.its
+	mkimage -f uboot-fit-image.its -A riscv -O linux -T flat_dt $(OUT)/rvirt.fit
+	cp $(OUT)/rvirt.fit /srv/tftp/hifiveu.fit
 
 # Display serial output from the HiFive Unleashed. To get line endings to be
 # correct, follow steps described on:
