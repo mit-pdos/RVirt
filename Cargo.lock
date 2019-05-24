@@ -2,17 +2,17 @@
 # It is not intended for manual editing.
 [[package]]
 name = "arr_macro"
-version = "0.1.1"
-source = "git+https://github.com/fintelia/arr_macro#dce2a89e056cb66ec115ecc1797e1aa59fb3b99b"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "arr_macro_impl 0.1.1 (git+https://github.com/fintelia/arr_macro)",
+ "arr_macro_impl 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "proc-macro-hack 0.5.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "arr_macro_impl"
-version = "0.1.1"
-source = "git+https://github.com/fintelia/arr_macro#dce2a89e056cb66ec115ecc1797e1aa59fb3b99b"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "proc-macro-hack 0.5.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "quote 0.6.12 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -72,7 +72,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "rvirt"
 version = "0.1.0"
 dependencies = [
- "arr_macro 0.1.1 (git+https://github.com/fintelia/arr_macro)",
+ "arr_macro 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "arrayvec 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "byteorder 1.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "riscv-decode 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -100,8 +100,8 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [metadata]
-"checksum arr_macro 0.1.1 (git+https://github.com/fintelia/arr_macro)" = "<none>"
-"checksum arr_macro_impl 0.1.1 (git+https://github.com/fintelia/arr_macro)" = "<none>"
+"checksum arr_macro 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d262b83f2f573121554ad6e764cd444303df85d86e5fcebc81903ddcf8dd3a97"
+"checksum arr_macro_impl 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "8decbe97ffec939e44228d91e5d0829ceb1616c6ed0984c09df164b1e7ebaafc"
 "checksum arrayvec 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)" = "92c7fb76bc8826a8b33b4ee5bb07a247a81e76764ab4d55e8f73e3a4d8808c71"
 "checksum byteorder 1.3.1 (registry+https://github.com/rust-lang/crates.io-index)" = "a019b10a2a7cdeb292db131fc8113e57ea2a908f6e7894b0c3c671893b65dbeb"
 "checksum nodrop 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)" = "2f9667ddcc6cc8a43afc9b7917599d7216aa09c463919ea32c59ed6cac8bc945"
