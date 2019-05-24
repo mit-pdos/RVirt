@@ -19,11 +19,11 @@ before_script:
   - export PATH=$PATH:$HOME/qemu/bin
   - |
       mkdir -p $HOME/fedora-images
-	  cd $HOME/fedora-images
-	  wget -N https://fedorapeople.org/groups/risc-v/disk-images/vmlinux
-	  wget -N https://fedorapeople.org/groups/risc-v/disk-images/stage4-disk.img.xz
-	  unxz stage4-disk.img.xz
-	  chmod -w stage4-disk.img
+      cd $HOME/fedora-images
+      wget -N https://fedorapeople.org/groups/risc-v/disk-images/vmlinux
+      wget -N https://fedorapeople.org/groups/risc-v/disk-images/stage4-disk.img.xz
+      unxz stage4-disk.img.xz
+      chmod -w stage4-disk.img
 
 script:
   - make target/riscv64imac-unknown-none-elf/release/rvirt
@@ -32,7 +32,7 @@ script:
       qemu-img create -f qcow2 -b $HOME/fedora-images/stage4-disk.img -F raw img01.qcow2 &&
       qemu qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1
         -kernel target/riscv64imac-unknown-none-elf/release/rvirt-bare-metal
-		-initrd $HOME/fedora-images/vmlinux
+        -initrd $HOME/fedora-images/vmlinux
         -append "console=ttyS0 root=/dev/vda"
         -object rng-random,filename=/dev/urandom,id=rng1
         -device virtio-rng-device,rng=rng1,bus=virtio-mmio-bus.0
