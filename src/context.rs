@@ -71,6 +71,10 @@ pub enum IrqMapping {
     Ignored,
 }
 
+pub struct TestFinisher {
+    registers: MemoryRegion<u32>,
+}
+
 pub struct Context {
     pub csrs: ControlRegisters,
     pub plic: PlicState,
@@ -94,6 +98,8 @@ pub struct Context {
 
     pub host_clint: HostClint,
     pub host_plic: HostPlic,
+
+    pub test_finisher: Option<TestFinisher>,
 
     /// Map from host external interrupt number to guest external interrupt nmuber
     pub irq_map: [IrqMapping; 512],
@@ -293,6 +299,17 @@ impl HostPlic {
     }
 }
 
+impl TestFinisher {
+    pub fn pass(&mut self) -> ! {
+        self.registers[0] = 0x5555;
+        unreachable!()
+    }
+    pub fn fail(&mut self, value: u16) -> ! {
+        self.registers[0] = 0x3333 | ((value as u32) << 16);
+        unreachable!()
+    }
+}
+
 impl SavedRegisters {
     pub fn get(&self, reg: u32) -> u64 {
         match reg {
@@ -455,6 +472,13 @@ pub unsafe fn initialize(machine: &MachineMeta,
         None => HostClint::Sbi,
     };
 
+    let test_finisher = match (guestid, machine.test_finisher_address) {
+        (None, Some(pa)) => Some(TestFinisher {
+            registers: MemoryRegion::with_base_address(pmap::pa2va(pa), 0, 8)
+        }),
+        _ => None,
+    };
+
     let context = Context {
         csrs: ControlRegisters {
             sstatus: 0,
@@ -499,6 +523,7 @@ pub unsafe fn initialize(machine: &MachineMeta,
         },
         consecutive_page_fault_count: 0,
         tlb_caches_invalid_ptes: false,
+        test_finisher,
         irq_map,
     };
 

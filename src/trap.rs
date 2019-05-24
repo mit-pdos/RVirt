@@ -247,6 +247,12 @@ pub fn strap() {
                 // will eventually be fixed by https://patchwork.kernel.org/patch/10872353.
                 pmap::flush_shadow_page_table(&mut state.shadow_page_tables);
             }
+            8 => {
+                if let Some(ref mut finisher) = state.test_finisher {
+                    finisher.pass();
+                }
+                loop {}
+            }
             i => {
                 println!("Got ecall from guest function={}!", i);
                 loop {}

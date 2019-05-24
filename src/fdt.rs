@@ -57,6 +57,8 @@ pub struct MachineMeta {
     pub plic_address: u64,
     pub clint_address: Option<u64>,
 
+    pub test_finisher_address: Option<u64>,
+
     pub virtio: ArrayVec<[Device; 16]>,
 
     pub bootargs: ArrayString<[u8; 256]>,
@@ -218,6 +220,7 @@ impl<'a> Fdt<'a> {
                         }
                     }
                     ("/soc/clint", "reg") => meta.clint_address = Some(prop.read_range().0),
+                    ("/test", "reg") => meta.test_finisher_address = Some(prop.read_range().0),
                     ("/soc/interrupt-controller", "reg") => plic = Some(prop.read_range().0),
                     ("/soc/interrupt-controller", "interrupts-extended") => {
                         let cells = prop.cells();
