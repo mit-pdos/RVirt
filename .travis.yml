@@ -1,0 +1,24 @@
+language: rust
+rust:
+  - nightly
+
+cache:
+  - apt
+  - directories:
+    - $HOME/qemu
+
+install:
+  - export PATH="$PATH:$HOME/.cargo/bin"
+  - rustup target add $TARGET || true
+
+before_script:
+  - bash -e third_party/travis-qemu.sh
+  - export PATH=$PATH:$HOME/qemu/bin
+
+script:
+  - make
+  - make qemu
+
+notifications:
+  email:
+	on_success: never
