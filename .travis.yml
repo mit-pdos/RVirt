@@ -21,4 +21,4 @@ script:
 
 notifications:
   email:
-	on_success: never
+    on_success: never
