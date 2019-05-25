@@ -7,7 +7,7 @@ OUT=target/riscv64imac-unknown-none-elf/release
 GUEST_KERNEL_FEATURE=$(if $(RVIRT_GUEST_KERNEL), --features embed_guest_kernel, )
 
 # Build the main rvirt binary. Relies on an SBI inteface for some functionality.
-$(OUT)/rvirt: src/*.rs src/*/*.rs src/*.S Cargo.toml src/slinker.ld
+$(OUT)/rvirt: src/*.rs src/*/*.rs src/*.S Cargo.toml src/slinker.ld rustup-target
 	cargo rustc --release --target riscv64imac-unknown-none-elf --bin rvirt \
 	    $(GUEST_KERNEL_FEATURE) -- -C link-arg=-Tsrc/slinker.ld
 
@@ -19,7 +19,7 @@ $(OUT)/rvirt.bin: $(OUT)/rvirt
 
 # Build a free standing binary that can run directly on bare metal without any
 # SBI provider.
-$(OUT)/rvirt-bare-metal: $(OUT)/rvirt.bin src/mlinker.ld
+$(OUT)/rvirt-bare-metal: $(OUT)/rvirt.bin src/*.rs src/*/*.rs src/*.S Cargo.toml src/mlinker.ld rustup-target
 	PAYLOAD=$(OUT)/rvirt.bin cargo rustc --release --target \
 	    riscv64imac-unknown-none-elf --bin rvirt-bare-metal --features \
 	    "physical_symbol_addresses" -- -C link-arg=-Tsrc/mlinker.ld
@@ -83,3 +83,10 @@ fit: $(OUT)/rvirt-bare-metal.bin uboot-fit-image.its
 # https://unix.stackexchange.com/questions/283924/how-can-minicom-permanently-translate-incoming-newline-n-to-crlf
 serial-output:
 	sudo minicom -D /dev/serial/by-id/usb-FTDI_Dual_RS232-HS-if01-port0
+
+################################################################################
+#                                MISC COMMANDS                                 #
+################################################################################
+
+rustup-target:
+	rustup target add riscv64imac-unknown-none-elf || true
