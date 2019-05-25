@@ -21,7 +21,7 @@ before_script:
 script:
   - make target/riscv64imac-unknown-none-elf/release/rvirt
   - make target/riscv64imac-unknown-none-elf/release/rvirt-bare-metal
-  - (sleep 8m && sshpass -p riscv ssh -vv -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -p 10001 root@localhost 'shutdown now') & timeout 10m make qemu
+  - make qemu & (sleep 8m && sshpass -p riscv ssh -vv -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -p 10001 root@localhost 'shutdown now')
 
 notifications:
   email:
