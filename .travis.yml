@@ -1,0 +1,28 @@
+language: rust
+rust:
+  - nightly
+
+cache:
+  - directories:
+    - $HOME/qemu
+
+install:
+  - sudo apt-get install sshpass
+  - rustup target add riscv64imac-unknown-none-elf || true
+
+before_script:
+  - bash -e third_party/travis-qemu.sh
+  - export PATH=$PATH:$HOME/qemu/bin
+  - wget https://fedorapeople.org/groups/risc-v/disk-images/vmlinux
+  - mv vmlinux fedora-vmlinux
+  - wget https://fedorapeople.org/groups/risc-v/disk-images/stage4-disk.img.xz
+  - unxz --verbose stage4-disk.img.xz
+
+script:
+  - make target/riscv64imac-unknown-none-elf/release/rvirt
+  - make target/riscv64imac-unknown-none-elf/release/rvirt-bare-metal
+  - make qemu & (sleep 8m && sshpass -p riscv ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -p 10001 root@localhost 'shutdown now')
+
+notifications:
+  email:
+    on_success: never

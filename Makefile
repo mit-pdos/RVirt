@@ -13,8 +13,9 @@ $(OUT)/rvirt: src/*.rs src/*/*.rs src/*.S Cargo.toml src/slinker.ld
 
 # Flattened version of rvirt binary.
 $(OUT)/rvirt.bin: $(OUT)/rvirt
-	objcopy -S -O binary --change-addresses -0x80000000 --set-section-flags \
-	    .bss=alloc,load,contents $(OUT)/rvirt $(OUT)/rvirt.bin
+	objcopy -S -I elf64-little -O binary --change-addresses -0x80000000 \
+	    --set-section-flags .bss=alloc,load,contents \
+	    $(OUT)/rvirt $(OUT)/rvirt.bin
 
 # Build a free standing binary that can run directly on bare metal without any
 # SBI provider.
@@ -25,7 +26,7 @@ $(OUT)/rvirt-bare-metal: $(OUT)/rvirt.bin src/mlinker.ld
 
 # Flattened version of rvirt-bare-metal binary.
 $(OUT)/rvirt-bare-metal.bin: $(OUT)/rvirt-bare-metal
-	objcopy -S -O binary --change-addresses -0x80000000 \
+	objcopy -S -I elf64-little -O binary --change-addresses -0x80000000 \
 	    $(OUT)/rvirt-bare-metal $(OUT)/rvirt-bare-metal.bin
 
 ################################################################################
@@ -34,7 +35,7 @@ $(OUT)/rvirt-bare-metal.bin: $(OUT)/rvirt-bare-metal
 
 # Run rvirt inside QEMU.
 qemu: $(OUT)/rvirt-bare-metal
-	~/git/qemu/build/riscv64-softmmu/qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1 $(GDBOPTS) \
+	qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1 $(GDBOPTS) \
 	    -kernel $(OUT)/rvirt-bare-metal -initrd fedora-vmlinux \
 	    -append "console=ttyS0 ro root=/dev/vda" \
 	    -object rng-random,filename=/dev/urandom,id=rng1 \
@@ -47,7 +48,7 @@ qemu: $(OUT)/rvirt-bare-metal
 # Run rvirt inside QEMU with BBL as the SBI provider. Requires a build of QEMU
 # with support for the `-bios` flag which mainline QEMU doesn't yet have.
 qemu-bbl: $(OUT)/rvirt.bin
-	~/git/qemu/build/riscv64-softmmu/qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1 \
+	qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1 \
 	    -bios bbl -kernel $(OUT)/rvirt.bin -initrd fedora-vmlinux \
 	    -append "console=ttyS0 root=/dev/vda2" \
 	    -object rng-random,filename=/dev/urandom,id=rng1 \
