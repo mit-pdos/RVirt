@@ -9,6 +9,7 @@ cache:
     - $HOME/qemu
 
 install:
+  - sudo apt-get install sshpass
   - export PATH="$PATH:$HOME/.cargo/bin"
   - rustup target add riscv64imac-unknown-none-elf || true
 
@@ -28,7 +29,8 @@ script:
   - make target/riscv64imac-unknown-none-elf/release/rvirt
   - make target/riscv64imac-unknown-none-elf/release/rvirt-bare-metal
   - >
-      qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1
+	  (sleep 8m && sshpass -p riscv ssh -v -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -p 10001 root@localhost 'shutdown now') &
+      timeout 10m qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1
       -kernel target/riscv64imac-unknown-none-elf/release/rvirt-bare-metal
       -initrd $HOME/fedora-images/vmlinux
       -append "console=ttyS0 root=/dev/vda"
