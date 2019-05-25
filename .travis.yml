@@ -14,7 +14,8 @@ install:
 before_script:
   - bash -e third_party/travis-qemu.sh
   - export PATH=$PATH:$HOME/qemu/bin
-  - wget https://fedorapeople.org/groups/risc-v/disk-images/vmlinux > fedora-vmlinux
+  - wget https://fedorapeople.org/groups/risc-v/disk-images/vmlinux
+  - mv vmlinux fedora-vmlinux
   - wget https://fedorapeople.org/groups/risc-v/disk-images/stage4-disk.img.xz
   - unxz --verbose stage4-disk.img.xz
 
