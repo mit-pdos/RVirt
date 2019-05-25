@@ -8,7 +8,6 @@ cache:
 
 install:
   - sudo apt-get install sshpass
-  - export PATH="$PATH:$HOME/.cargo/bin"
   - rustup target add riscv64imac-unknown-none-elf || true
 
 before_script:
