@@ -8,7 +8,6 @@ cache:
 
 install:
   - sudo apt-get install sshpass
-  - rustup target add riscv64imac-unknown-none-elf || true
 
 before_script:
   - bash -e third_party/travis-qemu.sh
