@@ -3,8 +3,6 @@ rust:
   - nightly
 
 cache:
-  - apt
-  - cargo
   - directories:
     - $HOME/qemu
 
@@ -16,30 +14,14 @@ install:
 before_script:
   - bash -e third_party/travis-qemu.sh
   - export PATH=$PATH:$HOME/qemu/bin
-  - mkdir -p $HOME/fedora-images
-  - cd $HOME/fedora-images
-  - wget -N https://fedorapeople.org/groups/risc-v/disk-images/vmlinux
-  - wget -N https://fedorapeople.org/groups/risc-v/disk-images/stage4-disk.img.xz
+  - wget https://fedorapeople.org/groups/risc-v/disk-images/vmlinux > fedora-vmlinux
+  - wget https://fedorapeople.org/groups/risc-v/disk-images/stage4-disk.img.xz
   - unxz --verbose stage4-disk.img.xz
-  - chmod -w stage4-disk.img
-  - cd -
-  - qemu-img create -f qcow2 -b $HOME/fedora-images/stage4-disk.img -F raw img01.qcow2
 
 script:
   - make target/riscv64imac-unknown-none-elf/release/rvirt
   - make target/riscv64imac-unknown-none-elf/release/rvirt-bare-metal
-  - >
-      (sleep 8m && sshpass -p riscv ssh -v -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -p 10001 root@localhost 'shutdown now') &
-      timeout 10m qemu-system-riscv64 -machine virt -nographic -m 2G -smp 1
-      -kernel target/riscv64imac-unknown-none-elf/release/rvirt-bare-metal
-      -initrd $HOME/fedora-images/vmlinux
-      -append "console=ttyS0 root=/dev/vda"
-      -object rng-random,filename=/dev/urandom,id=rng1
-      -device virtio-rng-device,rng=rng1,bus=virtio-mmio-bus.0
-      -device virtio-blk-device,drive=hd1,bus=virtio-mmio-bus.1
-      -drive file=img01.qcow2,format=qcow2,id=hd1
-      -device virtio-net-device,netdev=usernet1,bus=virtio-mmio-bus.2
-      -netdev user,id=usernet1,hostfwd=tcp::10001-:22
+  - (sleep 8m && sshpass -p riscv ssh -vv -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -p 10001 root@localhost 'shutdown now') & timeout 10m make qemu
 
 notifications:
   email:
