@@ -39,7 +39,7 @@ For more detailed instructions, see the [getting started guide](GETTING-STARTED.
 
     $ make qemu
 
-### Attach via SSH (root password is 'riscv')
+This command launches an instance of QEMU with RVirt running inside and Linux running inside that. Once the boot process has completed you can SSH in through all the layers and directly interact with the guest (root password is 'riscv'):
 
     $ ssh -p 10001 root@localhost
 
