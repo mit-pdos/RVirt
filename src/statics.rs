@@ -46,11 +46,11 @@ impl core::ops::Deref for ConditionalPointer {
 }
 
 const fn make_boot_page_tables_array() -> [[u64; 1024]; MAX_HOST_HARTS] {
-    const base: u64 = SUPERVISOR_SHARED_STATIC_ADDRESS - SYMBOL_PA2VA_OFFSET;
-    const stride: u64 = 1024 * 8;
+    const BASE: u64 = SUPERVISOR_SHARED_STATIC_ADDRESS - SYMBOL_PA2VA_OFFSET;
+    const STRIDE: u64 = 1024 * 8;
 
     let mut i = 0;
-    arr![pmap::make_boot_page_table({i += 1; base + (i - 1) * stride}); 16]
+    arr![pmap::make_boot_page_table({i += 1; BASE + (i - 1) * STRIDE}); 16]
 }
 
 /// This static is never accessed directly, but is needed so that the memory backing SHARED_STATICS

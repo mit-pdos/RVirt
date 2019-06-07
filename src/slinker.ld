@@ -44,7 +44,7 @@ SECTIONS
 
   ASSERT(. < 0xffffffffc0600000, "")
 
-  . = 0xffffffffe0000000;
+  . = 0xffffffffc0a00000;
   .initrd :
   {
   	*(.initrd)

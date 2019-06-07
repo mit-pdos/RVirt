@@ -2,7 +2,7 @@ use core::{fmt, ptr};
 use spin::MutexGuard;
 use crate::statics::SHARED_STATICS;
 use crate::fdt::UartType;
-use crate::{pmap, riscv};
+use crate::pmap;
 
 // see https://github.com/riscv/riscv-pk/blob/master/machine/uart16550.c
 // see: https://os.phil-opp.com/printing-to-screen

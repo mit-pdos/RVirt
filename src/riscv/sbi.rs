@@ -1,8 +1,6 @@
-use crate::pmap;
-
 #[naked]
 #[inline(never)]
-fn ecall(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64, a7: u64) {
+fn ecall(_a0: u64, _a1: u64, _a2: u64, _a3: u64, _a4: u64, _a5: u64, _a6: u64, _a7: u64) {
     unsafe { asm!("ecall" :: : "a0" : "volatile") }
 }
 

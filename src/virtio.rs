@@ -1,10 +1,10 @@
 use byteorder::{NativeEndian, ByteOrder};
 use riscv_decode::Instruction;
 use crate::context::Context;
+use crate::drivers::Driver;
 use crate::memory_region::MemoryRegion;
-use crate::drivers::macb::MacbDriver;
-use crate::{pmap, riscv, drivers};
 use crate::statics::SHARED_STATICS;
+use crate::{pmap, riscv, drivers};
 
 pub const MAX_QUEUES: usize = 4;
 pub const MAX_DEVICES: usize = 4;
@@ -27,7 +27,7 @@ pub enum Device {
         device_registers: MemoryRegion<u32>,
     },
     Unmapped,
-    Macb(drivers::LocalContext<MacbDriver>),
+    Macb(drivers::LocalContext),
 }
 impl Device {
     pub unsafe fn new(host_base_address: u64) -> Self {
@@ -59,12 +59,12 @@ pub fn handle_device_access(state: &mut Context, guest_pa: u64, instruction: u32
 
             match riscv_decode::decode(instruction).ok() {
                 Some(Instruction::Lw(i)) => {
-                    state.saved_registers.set(i.rd(), current as u64)
+                    state.saved_registers.set(i.rd(), current as i32 as i64 as u64)
                 }
                 Some(Instruction::Lb(i)) => {
                     assert!(offset >= 0x100);
                     let value = (current >> (8*(offset & 0x3))) & 0xff;
-                    state.saved_registers.set(i.rd(), value as u64)
+                    state.saved_registers.set(i.rd(), value as i8 as i64 as u64)
                 }
                 Some(Instruction::Sw(i)) => {
                     let mut value = state.saved_registers.get(i.rs2()) as u32;
@@ -132,14 +132,16 @@ pub fn handle_device_access(state: &mut Context, guest_pa: u64, instruction: u32
             let driver = driver.as_mut().unwrap();
             match riscv_decode::decode(instruction).ok() {
                 Some(Instruction::Lb(i)) =>
-                    state.saved_registers.set(i.rd(), local.read_u8(driver, &mut state.guest_memory, offset) as u64),
+                    state.saved_registers.set(i.rd(), driver.read_u8(local, &mut state.guest_memory, offset) as i8 as i64 as u64),
                 Some(Instruction::Lw(i)) =>
-                    state.saved_registers.set(i.rd(), local.read_u32(driver, &mut state.guest_memory, offset) as u64),
+                    state.saved_registers.set(i.rd(), driver.read_u32(local, &mut state.guest_memory, offset) as i32 as i64 as u64),
                 Some(Instruction::Sb(i)) =>
-                    local.write_u8(driver, &mut state.guest_memory, offset, state.saved_registers.get(i.rs2()) as u8),
+                    driver.write_u8(local, &mut state.guest_memory, offset, state.saved_registers.get(i.rs2()) as u8),
                 Some(Instruction::Sw(i)) =>
-                    local.write_u32(driver, &mut state.guest_memory, offset, state.saved_registers.get(i.rs2()) as u32),
-                Some(_) | None => {}
+                    driver.write_u32(local, &mut state.guest_memory, offset, state.saved_registers.get(i.rs2()) as u32),
+                Some(_) | None => {
+                    unimplemented!()
+                }
             }
         }
     }

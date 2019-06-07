@@ -1,8 +1,7 @@
 use crate::fdt::MachineMeta;
 use crate::context::Context;
-use crate::constants::SYMBOL_PA2VA_OFFSET;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
-use crate::{riscv, statics};
+use crate::riscv;
 use arr_macro::arr;
 use arrayvec::ArrayVec;
 use core::ptr;
@@ -64,8 +63,8 @@ pub const fn make_boot_page_table(base_pa: u64) -> [u64; 1024] {
             0,
             ((base_pa + 4096) >> 2) | 0x01,
             0x20000000 | 0xcb,
-            (0x20000000 + (i.wrapping_sub(512) << 19)) | 0xc7,
-            ((i - DIRECT_MAP_PT_INDEX/8) << 28) | PTE_AD | PTE_RWXV,
+            (0x20000000u64.wrapping_add(i.wrapping_sub(512) << 19)) | 0xc7,
+            ((i.wrapping_sub(DIRECT_MAP_PT_INDEX/8)) << 28) | PTE_AD | PTE_RWXV,
         ];
 
         let index =
@@ -79,21 +78,6 @@ pub const fn make_boot_page_table(base_pa: u64) -> [u64; 1024] {
 
     let mut i = 0;
     arr![pte(base_pa, {i += 1; i - 1}); 1024]
-}
-
-// conversions between machine-physical addresses and supervisor-virtual address
-#[allow(unused)]
-pub fn pa2sa(pa: u64) -> u64 {
-    if pa < 0x80000000 && pa >= 0xc0000000 {
-        panic!("pa2sa given invalid address");
-    }
-    pa + SYMBOL_PA2VA_OFFSET
-}
-pub fn sa2pa(sa: u64) -> u64 {
-    if sa < 0xffffffffc0000000 {
-        panic!("pa2sa given invalid address");
-    }
-    sa - SYMBOL_PA2VA_OFFSET
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -244,7 +228,7 @@ impl PageTables {
 }
 
 pub fn pa2va(pa: u64) -> u64 { pa + DIRECT_MAP_OFFSET }
-pub fn va2pa(va: u64) -> u64 {
+pub fn direct_map_va2pa(va: u64) -> u64 {
      // Must be in HPA region.
     assert!(va >= DIRECT_MAP_OFFSET);
     assert!(va < DIRECT_MAP_OFFSET + (DIRECT_MAP_PAGES<<30));
@@ -260,7 +244,7 @@ pub struct PageTableWalk {
     pub path: ArrayVec<[Pte; 3]>,
     pub pa: u64,
 }
-pub fn walk_page_table<R: Fn(u64) -> Option<u64>>(root: u64, va: u64, read_pte: R) -> Option<PageTableWalk> {
+fn walk_page_table<R: Fn(u64) -> Option<u64>>(root: u64, va: u64, read_pte: R) -> Option<PageTableWalk> {
     if !is_sv39(va) || root % PAGE_SIZE != 0 {
         return None;
     }

@@ -15,7 +15,7 @@ impl<T: Copy> MemoryRegion<T> {
         assert_eq!(length % mem::size_of::<T>() as u64, 0);
         Self {
             ptr: address as *mut T,
-            base_address: pmap::va2pa(address),
+            base_address: pmap::direct_map_va2pa(address),
             length_bytes: length,
         }
     }
@@ -121,7 +121,7 @@ impl PageTableRegion {
         assert_eq!((region.ptr as u64) % 4096, 0);
         assert_eq!(region.length_bytes % 4096, 0);
 
-        let end_pa = pmap::va2pa(region.ptr as u64) + region.length_bytes;
+        let end_pa = pmap::direct_map_va2pa(region.ptr as u64) + region.length_bytes;
 
         Self {
             region,

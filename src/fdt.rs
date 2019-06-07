@@ -39,6 +39,11 @@ pub struct Device {
 }
 
 #[derive(Clone, Debug)]
+pub enum NetDevice {
+    MacB(Device),
+}
+
+#[derive(Clone, Debug)]
 pub struct Hart {
     pub hartid: u64,
     pub plic_context: u64,
@@ -56,10 +61,10 @@ pub struct MachineMeta {
 
     pub plic_address: u64,
     pub clint_address: Option<u64>,
-
     pub test_finisher_address: Option<u64>,
 
     pub virtio: ArrayVec<[Device; 16]>,
+    pub net: Option<NetDevice>,
 
     pub bootargs: ArrayString<[u8; 256]>,
 
@@ -184,6 +189,10 @@ impl<'a> Fdt<'a> {
         let mut virtio_address_map = AddressMap::default();
         let mut virtio = [(None, None); AddressMap::MAX_LEN];
 
+        let mut net_is_macb = false;
+        let mut net_address = None;
+        let mut net_irq = None;
+
         // (hartid, phandle)
         let mut cpus = [(None, None); AddressMap::MAX_LEN];
         let mut cpu_address_map = AddressMap::default();
@@ -231,6 +240,9 @@ impl<'a> Fdt<'a> {
                             }
                         }
                     }
+                    ("/soc/ethernet", "compatible") => net_is_macb = (prop.value_str() == Some("cdns,macb")),
+                    ("/soc/ethernet", "reg") => net_address = Some(prop.read_range()),
+                    ("/soc/ethernet", "interrupts") => net_irq = Some(prop.read_int()),
                     ("/virtio_mmio", "reg") => {
                         let index = virtio_address_map.index_of(unit_addresses[1].unwrap_or(0));
                         virtio[index].0 = Some(prop.read_range());
@@ -282,6 +294,14 @@ impl<'a> Fdt<'a> {
             }
         }
         meta.virtio.sort_unstable_by_key(|v| v.base_address);
+
+        if net_is_macb && net_irq.is_some() && net_address.is_some() {
+            meta.net = Some(NetDevice::MacB(Device {
+                irq: net_irq.unwrap(),
+                base_address: net_address.as_ref().unwrap().0,
+                size: net_address.as_ref().unwrap().1,
+            }));
+        }
 
         meta
     }

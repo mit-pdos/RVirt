@@ -1,5 +1,6 @@
 use riscv_decode::Instruction;
 use crate::context::{Context, CONTEXT, IrqMapping};
+use crate::drivers::Driver;
 use crate::riscv::bits::*;
 use crate::statics::SHARED_STATICS;
 use crate::{pfault, pmap, riscv, sum, virtio};
@@ -305,9 +306,13 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
                         virtio::Device::Passthrough { .. } => true,
                         virtio::Device::Unmapped => false,
                         virtio::Device::Macb(ref mut macb) => {
-                            let mut driver = SHARED_STATICS.net.lock();
-                            let driver = driver.as_mut().unwrap();
-                            macb.interrupt(driver, &mut state.guest_memory)
+                            // TODO: Demux interrupt to correct guest.
+                            SHARED_STATICS.net
+                                .lock()
+                                .as_mut()
+                                .unwrap()
+                                .interrupt(macb, &mut state.guest_memory);
+                            false
                         }
                     };
 

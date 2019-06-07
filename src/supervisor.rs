@@ -78,11 +78,19 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
     // Do not allow the __SHARED_STATICS_IMPL symbol to be optimized out.
     assert_eq!(&__SHARED_STATICS_IMPL as *const _ as u64, constants::SUPERVISOR_SHARED_STATIC_ADDRESS);
 
-    // Program PLIC priorities
+    // Program PLIC priorities.
     for i in 1..127 {
         *(pa2va(machine.plic_address + i*4) as *mut u32) = 1;
     }
 
+    // Initialize network card if present.
+    if let Some(fdt::NetDevice::MacB(d)) = machine.net {
+        let mut n = SHARED_STATICS.net.lock();
+        *n = Some(drivers::macb::MacbDriver::new(memory_region::MemoryRegion::with_base_address(pa2va(d.base_address), 0, d.size)));
+        n.as_mut().unwrap().initialize();
+    }
+
+    // Boot guest harts.
     let mut guest_harts = machine.harts.clone();
     let single_hart = guest_harts.len() == 1;
     if !single_hart {
@@ -90,7 +98,6 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
     }
     let single_guest = guest_harts.len() == 1;
     assert!(guest_harts.len() != 0);
-
     assert!(1 + guest_harts.len() as u64 <= (machine.physical_memory_size >> 30));
 
     let mut guestid = 1;
@@ -166,8 +173,8 @@ unsafe fn hart_entry2(hartid: u64) {
 #[naked]
 #[no_mangle]
 #[inline(never)]
-unsafe fn hart_entry3(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64,
-                      hart_base_pa: u64, guestid: u64, stack_pointer: u64) {
+unsafe fn hart_entry3(_hartid: u64, _device_tree_blob: u64, _shared_segments_shift: u64,
+                      _hart_base_pa: u64, _guestid: u64, _stack_pointer: u64) {
     asm!("mv sp, a5
           j hart_entry4" :::: "volatile");
 }

@@ -1,6 +1,7 @@
 use arrayvec::ArrayVec;
 use spin::Mutex;
-use crate::fdt::MachineMeta;
+use crate::drivers::Driver;
+use crate::fdt::{MachineMeta, NetDevice};
 use crate::memory_region::MemoryRegion;
 use crate::plic::PlicState;
 use crate::pmap::{PageTables, PageTableRoot};
@@ -439,25 +440,41 @@ pub unsafe fn initialize(machine: &MachineMeta,
                          guest_shift: u64,
                          hartid: u64,
                          guestid: Option<u64>) {
+    let mut add_paravirtualized_net = machine.net.is_some();
     let mut irq_map = [IrqMapping::Ignored; 512];
     let mut virtio_devices = ArrayVec::new();
     for i in 0..4 {
+        let mut guest_irq = None;
+        for j in 0..4 {
+            if guest_machine.virtio[j].base_address == 0x10001000 + 0x1000 * i as u64 {
+                guest_irq = Some(guest_machine.virtio[j].irq);
+                break;
+            }
+        }
+
         let index = (guestid.unwrap_or(1) as usize - 1) * 4 + i;
         if index < machine.virtio.len() {
             virtio_devices.push(virtio::Device::new(machine.virtio[index].base_address));
             let host_irq = machine.virtio[index].irq;
-            let mut guest_irq = None;
-            for j in 0..4 {
-                if guest_machine.virtio[j].base_address == 0x10001000 + 0x1000 * i as u64 {
-                    guest_irq = Some(guest_machine.virtio[j].irq);
-                    break;
-                }
-            }
             assert_eq!(irq_map[host_irq as usize], IrqMapping::Ignored);
             irq_map[host_irq as usize] = IrqMapping::Virtio {
                 device_index: i as u8,
                 guest_irq: guest_irq.unwrap() as u16
             };
+        } else if add_paravirtualized_net {
+            match &machine.net {
+                Some(NetDevice::MacB(device)) => {
+                    let local = SHARED_STATICS.net.lock().as_mut().unwrap().new_context(guestid.unwrap_or(0));
+                    virtio_devices.push(virtio::Device::Macb(local));
+                    assert_eq!(irq_map[device.irq as usize], IrqMapping::Ignored);
+                    irq_map[device.irq as usize] = IrqMapping::Virtio {
+                        device_index: i as u8,
+                        guest_irq: guest_irq.unwrap() as u16
+                    };
+                }
+                None => unreachable!(),
+            }
+            add_paravirtualized_net = false;
         } else {
             virtio_devices.push(virtio::Device::Unmapped);
         }

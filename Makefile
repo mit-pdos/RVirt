@@ -60,8 +60,10 @@ qemu-bbl: $(OUT)/rvirt.bin
 
 # Run rvirt inside QEMU but target the sifive_u machine type.
 qemu-sifive: $(OUT)/rvirt-bare-metal
-	qemu-system-riscv64 -machine sifive_u -nographic -m 2G \
-	    -kernel $(OUT)/rvirt-bare-metal
+	~/git/qemu/build/riscv64-softmmu/qemu-system-riscv64 -machine sifive_u -nographic -m 2G \
+	    -append "nfsrootdebug ip=10.0.2.15:10.0.2.2 root=/dev/nfs" \
+	    -kernel $(OUT)/rvirt-bare-metal -nic user,id=net0 \
+	    -object filter-dump,id=net0,netdev=net0,file=dump.dat
 
 # Run rvirt inside QEMU but wait for GDB to attach on port 26000 first.
 GDBOPTS=$(if $(DEBUG),-gdb tcp::26000 -S,)

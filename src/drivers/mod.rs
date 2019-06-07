@@ -1,7 +1,5 @@
 use arrayvec::ArrayVec;
 use byteorder::{ByteOrder, LittleEndian};
-use core::marker::PhantomData;
-use spin::Mutex;
 use crate::memory_region::MemoryRegion;
 
 pub mod macb;
@@ -43,6 +41,9 @@ mod constants {
     pub const VIRTQ_DESC_F_NEXT: u16 = 1;
     pub const VIRTQ_DESC_F_WRITE: u16 = 2;
 
+    pub const VIRTIO_NET_RX_QUEUE: u32 = 0;
+    pub const VIRTIO_NET_TX_QUEUE: u32 = 1;
+
     pub const MAX_QUEUES: usize = 4;
 }
 pub use constants::*;
@@ -51,28 +52,134 @@ pub trait Driver: Sized {
     const DEVICE_ID: u32;
     const FEATURES: u64;
     const QUEUE_NUM_MAX: u32;
+    const MAX_CONTEXTS: u64;
 
-    fn interrupt(&mut self) -> bool;
-    fn doorbell(&mut self, queue: u32);
+    /// Returns the id of the guest that should process this interrupt.
+    fn demux_interrupt(&mut self) -> u64;
+    fn interrupt(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion);
+    fn doorbell(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion, queue: u32);
 
-    fn read_config_u8(&mut self, offset: u64) -> u8;
-    fn read_config_u32(&mut self, offset: u64) -> u32 {
+    fn read_config_u8(&mut self, local: &mut LocalContext, offset: u64) -> u8;
+    fn read_config_u32(&mut self, local: &mut LocalContext, offset: u64) -> u32 {
         u32::from_le_bytes([
-            self.read_config_u8(offset),
-            self.read_config_u8(offset+1),
-            self.read_config_u8(offset+2),
-            self.read_config_u8(offset+3),
+            self.read_config_u8(local, offset),
+            self.read_config_u8(local, offset+1),
+            self.read_config_u8(local, offset+2),
+            self.read_config_u8(local, offset+3),
         ])
     }
-    fn write_config_u8(&mut self, offset: u64, value: u8);
-    fn write_config_u32(&mut self, offset: u64, value: u32) {
-        self.write_config_u8(offset, value.to_le_bytes()[0]);
-        self.write_config_u8(offset+1, value.to_le_bytes()[1]);
-        self.write_config_u8(offset+2, value.to_le_bytes()[2]);
-        self.write_config_u8(offset+3, value.to_le_bytes()[3]);
+    fn write_config_u8(&mut self, local: &mut LocalContext, offset: u64, value: u8);
+    fn write_config_u32(&mut self, local: &mut LocalContext, offset: u64, value: u32) {
+        self.write_config_u8(local, offset, value.to_le_bytes()[0]);
+        self.write_config_u8(local, offset+1, value.to_le_bytes()[1]);
+        self.write_config_u8(local, offset+2, value.to_le_bytes()[2]);
+        self.write_config_u8(local, offset+3, value.to_le_bytes()[3]);
     }
 
-    fn reset(&mut self);
+    fn reset_context(&mut self, local: &mut LocalContext);
+
+    fn new_context(&mut self, guestid: u64) -> LocalContext {
+        assert!(guestid < Self::MAX_CONTEXTS);
+        LocalContext {
+            host_features_sel: 0,
+            guest_features_sel: 0,
+            guest_features: 0,
+            guest_page_size: 4096,
+            queue_sel: 0,
+            queue_num: [0; MAX_QUEUES],
+            queue_align: [0; MAX_QUEUES],
+            queue_pfn: [0; MAX_QUEUES],
+            interrupt_status: 0,
+            status: 0,
+        }
+    }
+
+    fn read_u8(&mut self, local: &mut LocalContext, _guest_memory: &mut MemoryRegion, offset: u64) -> u8 {
+        if offset >= 0x100 {
+            let value = self.read_config_u8(local, offset - 0x100);
+            println!("NET: lb {:#x} -> {:x}", offset, value);
+            value
+        } else {
+            0
+        }
+    }
+
+    fn read_u32(&mut self, local: &mut LocalContext, _guest_memory: &mut MemoryRegion, offset: u64) -> u32 {
+        if offset % 4 != 0 {
+            return 0;
+        }
+
+        if offset >= 0x100 {
+            println!("NET: lw {:#x}", offset);
+            return self.read_config_u32(local, offset - 0x100);
+        }
+
+        let value = match offset {
+            REG_MAGIC_VALUE => MAGIC_VALUE,
+            REG_VERSION => 1,
+            REG_DEVICE_ID => Self::DEVICE_ID,
+            REG_VENDOR_ID => VENDOR_ID,
+            REG_HOST_FEATURES if local.host_features_sel == 0 => (Self::FEATURES & 0xffffffff) as u32,
+            REG_HOST_FEATURES if local.host_features_sel == 1 => ((Self::FEATURES >> 32) & 0xffffffff) as u32,
+            REG_HOST_FEATURES => 0,
+            REG_HOST_FEATURES_SEL => local.host_features_sel,
+            REG_GUEST_FEATURES => 0,
+            REG_GUEST_FEATURES_SEL => local.guest_features_sel,
+            REG_GUEST_PAGE_SIZE => local.guest_page_size,
+            REG_QUEUE_SEL => local.queue_sel,
+            REG_QUEUE_NUM_MAX => Self::QUEUE_NUM_MAX,
+            REG_QUEUE_NUM => local.queue_num[local.queue_sel as usize],
+            REG_QUEUE_ALIGN => local.queue_align[local.queue_sel as usize],
+            REG_QUEUE_PFN => local.queue_pfn[local.queue_sel as usize],
+            REG_QUEUE_NOTIFY => 0,
+            REG_INTERRUPT_STATUS => 0,
+            REG_INTERRUPT_ACK => 0,
+            REG_STATUS => local.status,
+            _ => 0,
+        };
+        println!("NET: lw {:#x} -> {:x}", offset, value);
+        value
+    }
+
+    fn write_u8(&mut self, local: &mut LocalContext, _guest_memory: &mut MemoryRegion, offset: u64, value: u8)  {
+        if offset >= 0x100 {
+            self.write_config_u8(local, offset - 0x100, value);
+        }
+    }
+
+    fn write_u32(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion, offset: u64, value: u32) {
+        println!("NET: sw {:#x} <- {:x}", offset, value);
+        if offset % 4 != 0 {
+            return;
+        }
+
+        if offset >= 0x100 {
+            self.write_config_u32(local, offset - 0x100, value);
+            return;
+        }
+
+        match offset {
+            REG_HOST_FEATURES_SEL => local.host_features_sel = value,
+            REG_GUEST_FEATURES if local.guest_features_sel == 0 => local.guest_features = (local.guest_features & !0xffffffff) | value as u64,
+            REG_GUEST_FEATURES if local.guest_features_sel == 1 => local.guest_features = (local.guest_features & 0xffffffff) | ((value as u64) << 32),
+            REG_GUEST_FEATURES_SEL => local.guest_features_sel = value,
+            REG_GUEST_PAGE_SIZE => local.guest_page_size = value,
+            REG_QUEUE_SEL => local.queue_sel = value,
+            REG_QUEUE_NUM => local.queue_num[local.queue_sel as usize] = value,
+            REG_QUEUE_ALIGN => local.queue_align[local.queue_sel as usize] = value,
+            REG_QUEUE_PFN => local.queue_pfn[local.queue_sel as usize] = value,
+            REG_QUEUE_NOTIFY => self.doorbell(local, guest_memory, value),
+            REG_INTERRUPT_ACK => local.interrupt_status &= !value,
+            REG_STATUS => {
+                if value == 0 {
+                    self.reset_context(local);
+                } else {
+                    local.status = value;
+                }
+            }
+            _ => {},
+        }
+    }
 }
 
 pub struct DescriptorTable<'a> {
@@ -103,7 +210,7 @@ impl<'a> DescriptorTable<'a> {
     fn set_used_ring_len(&mut self, index: usize, value: u32) { LittleEndian::write_u32(&mut self.used[8+8*index..], value) }
 }
 
-pub struct LocalContext<D: Driver> {
+pub struct LocalContext {
     host_features_sel: u32,
 
     guest_features_sel: u32,
@@ -118,114 +225,8 @@ pub struct LocalContext<D: Driver> {
 
     interrupt_status: u32,
     status: u32,
-
-    _phantom: PhantomData<D>
 }
-
-impl<D: Driver> LocalContext<D> {
-    pub fn new() -> Self {
-        Self {
-            host_features_sel: 0,
-            guest_features_sel: 0,
-            guest_features: 0,
-            guest_page_size: 4096,
-            queue_sel: 0,
-            queue_num: [0; MAX_QUEUES],
-            queue_align: [0; MAX_QUEUES],
-            queue_pfn: [0; MAX_QUEUES],
-            interrupt_status: 0,
-            status: 0,
-            _phantom: PhantomData,
-        }
-    }
-
-    pub fn read_u8(&mut self, device: &mut D, guest_memory: &mut MemoryRegion, offset: u64) -> u8 {
-        if offset > 0x100 {
-            device.read_config_u8(offset)
-        } else {
-            0
-        }
-    }
-
-    pub fn read_u32(&mut self, device: &mut D, guest_memory: &mut MemoryRegion, offset: u64) -> u32 {
-        if offset % 4 != 0 {
-            return 0;
-        }
-
-        if offset > 0x100 {
-            return device.read_config_u32(offset);
-        }
-
-        match offset {
-            REG_MAGIC_VALUE => MAGIC_VALUE,
-            REG_VERSION => 1,
-            REG_DEVICE_ID => D::DEVICE_ID,
-            REG_VENDOR_ID => VENDOR_ID,
-            REG_HOST_FEATURES if self.host_features_sel == 0 => (D::FEATURES & 0xffffffff) as u32,
-            REG_HOST_FEATURES if self.host_features_sel == 1 => ((D::FEATURES >> 32) & 0xffffffff) as u32,
-            REG_HOST_FEATURES => 0,
-            REG_HOST_FEATURES_SEL => self.host_features_sel,
-            REG_GUEST_FEATURES => 0,
-            REG_GUEST_FEATURES_SEL => self.guest_features_sel,
-            REG_GUEST_PAGE_SIZE => self.guest_page_size,
-            REG_QUEUE_SEL => self.queue_sel,
-            REG_QUEUE_NUM_MAX => D::QUEUE_NUM_MAX,
-            REG_QUEUE_NUM => self.queue_num[self.queue_sel as usize],
-            REG_QUEUE_ALIGN => self.queue_align[self.queue_sel as usize],
-            REG_QUEUE_PFN => self.queue_pfn[self.queue_sel as usize],
-            REG_QUEUE_NOTIFY => 0,
-            REG_INTERRUPT_STATUS => 0,
-            REG_INTERRUPT_ACK => 0,
-            REG_STATUS => self.status,
-            _ => 0,
-        }
-    }
-
-    pub fn write_u8(&mut self, device: &mut D, guest_memory: &mut MemoryRegion, offset: u64, value: u8)  {
-        if offset > 0x100 {
-            device.write_config_u8(offset, value);
-        }
-    }
-
-    pub fn write_u32(&mut self, device: &mut D, guest_memory: &mut MemoryRegion, offset: u64, value: u32) {
-        if offset % 4 != 0 {
-            return;
-        }
-
-        if offset > 0x100 {
-            device.write_config_u32(offset, value);
-            return;
-        }
-
-        match offset {
-            REG_HOST_FEATURES_SEL => self.host_features_sel = value,
-            REG_GUEST_FEATURES if self.guest_features_sel == 0 => self.guest_features = (self.guest_features & !0xffffffff) | value as u64,
-            REG_GUEST_FEATURES if self.guest_features_sel == 1 => self.guest_features = (self.guest_features & 0xffffffff) | ((value as u64) << 32),
-            REG_GUEST_FEATURES_SEL => self.guest_features_sel = value,
-            REG_GUEST_PAGE_SIZE => self.guest_page_size = value,
-            REG_QUEUE_SEL => self.queue_sel = value,
-            REG_QUEUE_NUM => self.queue_num[self.queue_sel as usize] = value,
-            REG_QUEUE_ALIGN => self.queue_align[self.queue_sel as usize] = value,
-            REG_QUEUE_PFN => self.queue_pfn[self.queue_sel as usize] = value,
-            REG_QUEUE_NOTIFY => device.doorbell(self.queue_sel), // TODO: is this right?
-            REG_INTERRUPT_ACK => self.interrupt_status &= !value,
-            REG_STATUS => {
-                if value == 0 {
-                    self.reset();
-                    device.reset();
-                } else {
-                    self.status = value;
-                }
-            }
-            _ => {},
-        }
-    }
-
-    /// Returns true if the interrupt should be forwarded onto the guest, false otherwise.
-    pub fn interrupt(&mut self, device: &mut D,  guest_memory: &mut MemoryRegion) -> bool {
-        device.interrupt()
-    }
-
+impl LocalContext {
     fn reset(&mut self) {
         self.host_features_sel = 0;
         self.guest_features_sel = 0;
@@ -240,47 +241,53 @@ impl<D: Driver> LocalContext<D> {
         self.interrupt_status = 0;
     }
 
-    fn with_buffer<F: FnOnce(&[&[u8]]) -> Option<u32>>(&mut self, guest_memory: &mut MemoryRegion, queue: u32, f: F) {
-        let dt = self.get_queue(guest_memory, queue);
+    /// Repeatedly call f with the next buffer in the given queue until the queue is empty or the
+    /// function returns None.
+    fn with_buffers<F: FnMut(&[&[u8]]) -> Option<u32>>(&mut self, guest_memory: &mut MemoryRegion, queue: u32, mut f: F) {
+        loop {
+            let dt = self.get_queue(guest_memory, queue);
 
-        if dt.avail_idx() == dt.used_idx() {
-            return;
-        }
-
-        let mut ranges = ArrayVec::<[(u64, u32); 16]>::new();
-
-        let idx = (dt.used_idx() as usize + 1) % dt.queue_size;
-        let id = dt.avail_ring(idx) as usize;
-
-        let mut flags = VIRTQ_DESC_F_NEXT;
-        let mut next_id = id;
-        while flags & VIRTQ_DESC_F_NEXT != 0 {
-            let addr = dt.desc_addr(next_id);
-            let len = dt.desc_len(next_id);
-            flags = dt.desc_flags(next_id);
-            next_id = dt.desc_next(next_id) as usize;
-
-            ranges.push((addr, len));
-        }
-
-        // Handling the borrow checker is a bit tricky here. At this point, we let the lifetime of
-        // `dt` end so that its borrow of `guest_memory` ends. Then we borrow a bunch of slices from
-        // `guest_memory` and pass them to `f`. Once that function returns, we have `buffers` go out
-        // of scope so that we can borrow `guest_memory` again to make a DescriptorTable.
-        let consume_buffers = {
-            let mut buffers = ArrayVec::<[&[u8]; 16]>::new();
-            for (addr, len) in ranges {
-                buffers.push(guest_memory.slice(addr, len as u64));
+            if dt.avail_idx() == dt.used_idx() {
+                return;
             }
 
-            f(&*buffers)
-        };
+            let mut ranges = ArrayVec::<[(u64, u32); 16]>::new();
 
-        if let Some(len) = consume_buffers {
-            let mut dt = self.get_queue(guest_memory, queue);
-            dt.set_used_ring_id(idx, id as u32);
-            dt.set_used_ring_len(idx, len);
-            dt.set_used_idx(dt.used_idx().wrapping_add(1));
+            let idx = (dt.used_idx() as usize + 1) % dt.queue_size;
+            let id = dt.avail_ring(idx) as usize;
+
+            let mut flags = VIRTQ_DESC_F_NEXT;
+            let mut next_id = id;
+            while flags & VIRTQ_DESC_F_NEXT != 0 {
+                let addr = dt.desc_addr(next_id);
+                let len = dt.desc_len(next_id);
+                flags = dt.desc_flags(next_id);
+                next_id = dt.desc_next(next_id) as usize;
+
+                ranges.push((addr, len));
+            }
+
+            // Handling the borrow checker is a bit tricky here. At this point, we let the lifetime of
+            // `dt` end so that its borrow of `guest_memory` ends. Then we borrow a bunch of slices from
+            // `guest_memory` and pass them to `f`. Once that function returns, we have `buffers` go out
+            // of scope so that we can borrow `guest_memory` again to make a DescriptorTable.
+            let consume_buffers = {
+                let mut buffers = ArrayVec::<[&[u8]; 16]>::new();
+                for (addr, len) in ranges {
+                    buffers.push(guest_memory.slice(addr, len as u64));
+                }
+
+                f(&*buffers)
+            };
+
+            if let Some(len) = consume_buffers {
+                let mut dt = self.get_queue(guest_memory, queue);
+                dt.set_used_ring_id(idx, id as u32);
+                dt.set_used_ring_len(idx, len);
+                dt.set_used_idx(dt.used_idx().wrapping_add(1));
+            } else {
+                return;
+            }
         }
     }
 
@@ -288,16 +295,18 @@ impl<D: Driver> LocalContext<D> {
         let pfn = self.queue_pfn[queue as usize];
         let queue_size = self.queue_num[queue as usize] as usize;
         let align = self.queue_align[queue as usize] as usize;
+        assert!(align.is_power_of_two());
 
         let desc_size = 16 * queue_size;
         let avail_size = 6 + 2 * queue_size;
         let used_size = 6 + 8 * queue_size;
 
-        let used_start = ((desc_size + avail_size + (align - 1)) % align) - align;
+        let used_start = desc_size + avail_size;
+        let used_start = ((used_start - 1) & (align - 1)) + 1;
 
         let slice = guest_memory.slice_mut(pfn as u64 * 4096, (used_start + used_size) as u64);
         let (desc, slice) = slice.split_at_mut(desc_size);
-        let (avail, slice) = slice.split_at_mut(used_size);
+        let (avail, slice) = slice.split_at_mut(avail_size);
         let (_, used) = slice.split_at_mut(used_start - desc_size - avail_size);
 
         DescriptorTable {
