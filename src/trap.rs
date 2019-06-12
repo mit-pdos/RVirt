@@ -311,8 +311,7 @@ fn handle_interrupt(state: &mut Context, cause: u64) {
                                 .lock()
                                 .as_mut()
                                 .unwrap()
-                                .interrupt(macb, &mut state.guest_memory);
-                            false
+                                .interrupt(macb, &mut state.guest_memory)
                         }
                     };
 

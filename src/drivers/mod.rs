@@ -1,6 +1,7 @@
 use arrayvec::ArrayVec;
 use byteorder::{ByteOrder, LittleEndian};
 use crate::memory_region::MemoryRegion;
+use core::ops::Range;
 
 pub mod macb;
 
@@ -56,7 +57,7 @@ pub trait Driver: Sized {
 
     /// Returns the id of the guest that should process this interrupt.
     fn demux_interrupt(&mut self) -> u64;
-    fn interrupt(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion);
+    fn interrupt(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion) -> bool;
     fn doorbell(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion, queue: u32);
 
     fn read_config_u8(&mut self, local: &mut LocalContext, offset: u64) -> u8;
@@ -132,8 +133,8 @@ pub trait Driver: Sized {
             REG_QUEUE_ALIGN => local.queue_align[local.queue_sel as usize],
             REG_QUEUE_PFN => local.queue_pfn[local.queue_sel as usize],
             REG_QUEUE_NOTIFY => 0,
-            REG_INTERRUPT_STATUS => 0,
-            REG_INTERRUPT_ACK => 0,
+            REG_INTERRUPT_STATUS => local.interrupt_status,
+            REG_INTERRUPT_ACK => local.interrupt_status = 0,
             REG_STATUS => local.status,
             _ => 0,
         };
@@ -243,7 +244,24 @@ impl LocalContext {
 
     /// Repeatedly call f with the next buffer in the given queue until the queue is empty or the
     /// function returns None.
-    fn with_buffers<F: FnMut(&[&[u8]]) -> Option<u32>>(&mut self, guest_memory: &mut MemoryRegion, queue: u32, mut f: F) {
+    fn with_buffers<F>(&mut self, guest_memory: &mut MemoryRegion, queue: u32, mut f: F) where
+        F: FnMut(&[&[u8]]) -> Option<u32>
+    {
+        self.with_ranges(guest_memory, queue, |guest_memory, ranges| {
+            let mut buffers = ArrayVec::<[&[u8]; 16]>::new();
+            for &Range { start, end } in ranges {
+                buffers.push(guest_memory.slice(start, end - start));
+            }
+            f(&*buffers)
+        });
+    }
+
+
+    /// Repeatedly call f with the next buffer in the given queue until the queue is empty or the
+    /// function returns None.
+    fn with_ranges<F>(&mut self, guest_memory: &mut MemoryRegion, queue: u32, mut f: F) where
+        F: FnMut(&mut MemoryRegion, &[Range<u64>]) -> Option<u32>
+    {
         loop {
             let dt = self.get_queue(guest_memory, queue);
 
@@ -251,7 +269,7 @@ impl LocalContext {
                 return;
             }
 
-            let mut ranges = ArrayVec::<[(u64, u32); 16]>::new();
+            let mut ranges = ArrayVec::<[Range<u64>; 16]>::new();
 
             let idx = (dt.used_idx() as usize + 1) % dt.queue_size;
             let id = dt.avail_ring(idx) as usize;
@@ -264,23 +282,10 @@ impl LocalContext {
                 flags = dt.desc_flags(next_id);
                 next_id = dt.desc_next(next_id) as usize;
 
-                ranges.push((addr, len));
+                ranges.push(Range { start: addr, end: addr + len as u64 });
             }
 
-            // Handling the borrow checker is a bit tricky here. At this point, we let the lifetime of
-            // `dt` end so that its borrow of `guest_memory` ends. Then we borrow a bunch of slices from
-            // `guest_memory` and pass them to `f`. Once that function returns, we have `buffers` go out
-            // of scope so that we can borrow `guest_memory` again to make a DescriptorTable.
-            let consume_buffers = {
-                let mut buffers = ArrayVec::<[&[u8]; 16]>::new();
-                for (addr, len) in ranges {
-                    buffers.push(guest_memory.slice(addr, len as u64));
-                }
-
-                f(&*buffers)
-            };
-
-            if let Some(len) = consume_buffers {
+            if let Some(len) = f(guest_memory, &*ranges) {
                 let mut dt = self.get_queue(guest_memory, queue);
                 dt.set_used_ring_id(idx, id as u32);
                 dt.set_used_ring_len(idx, len);

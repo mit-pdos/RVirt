@@ -84,7 +84,10 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
     }
 
     // Initialize network card if present.
+    let mut net_irq = None;
     if let Some(fdt::NetDevice::MacB(d)) = machine.net {
+        net_irq = Some(d.irq);
+
         let mut n = SHARED_STATICS.net.lock();
         *n = Some(drivers::macb::MacbDriver::new(memory_region::MemoryRegion::with_base_address(pa2va(d.base_address), 0, d.size)));
         n.as_mut().unwrap().initialize();
@@ -109,14 +112,17 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
             let index = ((guestid-1) * 4 + j) as usize;
             if index < machine.virtio.len() {
                 let irq = machine.virtio[index].irq;
-                assert!(irq < 32);
-                irq_mask |= 1u32 << irq;
+                irq_mask |= 1u64.checked_shl(irq as u32).unwrap();
             }
         }
 
+        if let Some(irq) = net_irq {
+            irq_mask |= 1u64.checked_shl(irq as u32).unwrap();
+        }
+
         *(pa2va(machine.plic_address + 0x200000 + 0x1000 * hart.plic_context) as *mut u32) = 0;
-        *(pa2va(machine.plic_address + 0x2000 + 0x80 * hart.plic_context) as *mut u32) = irq_mask;
-        *(pa2va(machine.plic_address + 0x2000 + 0x80 * hart.plic_context + 4) as *mut u32) = 0;
+        *(pa2va(machine.plic_address + 0x2000 + 0x80 * hart.plic_context + 0) as *mut u32) = 0xffffffff;//(irq_mask & 0xffffffff) as u32;
+        *(pa2va(machine.plic_address + 0x2000 + 0x80 * hart.plic_context + 4) as *mut u32) = 0xffffffff;//(irq_mask >> 32) as u32;
 
         (*(pa2va(hart_base_pa) as *mut [u64; 1024])) = pmap::make_boot_page_table(hart_base_pa);
         for i in 512..1024 {

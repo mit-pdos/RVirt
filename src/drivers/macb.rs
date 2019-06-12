@@ -5,6 +5,7 @@
 // https://github.com/torvalds/linux/blob/master/drivers/net/ethernet/cadence/macb_main.c
 // https://www.yumpu.com/en/document/view/31739994/gigabit-ethernet-mac-gem-technical-data-sheet-cadence-
 
+use arr_macro::arr;
 use crate::memory_region::MemoryRegion;
 use crate::{pmap, riscv};
 use super::*;
@@ -182,13 +183,13 @@ mod constants {
     pub const GEM_NWCFG_BCAST_REJ: u64 = 0x00000020; /* Reject broadcast packets */
     pub const GEM_NWCFG_PROMISC: u64 = 0x00000010; /* Accept all packets */
 
-    pub const GEM_DMACFG_ADDR_64B: u64 = 1 << 30;
-    pub const GEM_DMACFG_TX_BD_EXT: u64 = 1 << 29;
-    pub const GEM_DMACFG_RX_BD_EXT: u64 = 1 << 28;
-    pub const GEM_DMACFG_RBUFSZ_M: u64 = 0x00FF0000; /* DMA RX Buffer Size mask */
-    pub const GEM_DMACFG_RBUFSZ_S: u64 = 16;         /* DMA RX Buffer Size shift */
-    pub const GEM_DMACFG_RBUFSZ_MUL: u64 = 64;         /* DMA RX Buffer Size multiplier */
-    pub const GEM_DMACFG_TXCSUM_OFFL: u64 = 0x00000800; /* Transmit checksum offload */
+    pub const GEM_DMACFG_ADDR_64B: u32 = 1 << 30;
+    pub const GEM_DMACFG_TX_BD_EXT: u32 = 1 << 29;
+    pub const GEM_DMACFG_RX_BD_EXT: u32 = 1 << 28;
+    pub const GEM_DMACFG_RBUFSZ_M: u32 = 0x00FF0000; /* DMA RX Buffer Size mask */
+    pub const GEM_DMACFG_RBUFSZ_S: u32 = 16;         /* DMA RX Buffer Size shift */
+    pub const GEM_DMACFG_RBUFSZ_MUL: u32 = 64;         /* DMA RX Buffer Size multiplier */
+    pub const GEM_DMACFG_TXCSUM_OFFL: u32 = 0x00000800; /* Transmit checksum offload */
 
     pub const GEM_TXSTATUS_TXCMPL: u64 = 0x00000020; /* Transmit Complete */
     pub const GEM_TXSTATUS_USED: u64 = 0x00000001; /* sw owned descriptor encountered */
@@ -197,10 +198,10 @@ mod constants {
     pub const GEM_RXSTATUS_NOBUF: u64 = 0x00000001; /* Buffer unavailable */
 
     /* GEM_ISR GEM_IER GEM_IDR GEM_IMR */
-    pub const GEM_INT_TXCMPL: u64 = 0x00000080; /* Transmit Complete */
-    pub const GEM_INT_TXUSED: u64 = 0x00000008;
-    pub const GEM_INT_RXUSED: u64 = 0x00000004;
-    pub const GEM_INT_RXCMPL: u64 = 0x00000002;
+    pub const GEM_INT_TXCMPL: u32 = 0x00000080; /* Transmit Complete */
+    pub const GEM_INT_TXUSED: u32 = 0x00000008;
+    pub const GEM_INT_RXUSED: u32 = 0x00000004;
+    pub const GEM_INT_RXCMPL: u32 = 0x00000002;
 
     pub const GEM_PHYMNTNC_OP_R: u64 = 0x20000000; /* read operation */
     pub const GEM_PHYMNTNC_OP_W: u64 = 0x10000000; /* write operation */
@@ -286,24 +287,14 @@ const GEM_DMACFG: u64 = 0x00000010;
 const GEM_DMACFG_ADDR_64B: u32 = 1 << 30;
 
 
-const QUEUE_LENGTH: usize = 1024;
+const TX_QUEUE_LENGTH: usize = 1024;
+const RX_QUEUE_LENGTH: usize = 16;
 
 const VIRTIO_MTU: u16 = 2048;
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug)]
 struct RxDesc([u32; 4]);
-impl RxDesc {
-    #[allow(unused)]
-    fn new(addr: u64) -> Self {
-        RxDesc([
-            addr as u32,
-            0,
-            (addr >> 32) as u32,
-            0
-        ])
-    }
-}
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug)]
@@ -320,14 +311,20 @@ impl TxDesc {
     }
 }
 
+#[repr(align(2048))]
+struct RxBuf([u8; 2048]);
+
 /// Driver for the Cadence GEM Ethernet device.
 pub struct MacbDriver {
     control_registers: MemoryRegion<u32>,
     mac: [u8; 6],
 
-    rx_queues: [[RxDesc; 1024]; Self::MAX_CONTEXTS as usize],
-    tx_queue: [TxDesc; 1024],
+    rx_queue: [RxDesc; RX_QUEUE_LENGTH],
+    tx_queue: [TxDesc; TX_QUEUE_LENGTH],
 
+    rx_buffers: [RxBuf; RX_QUEUE_LENGTH],
+
+    rx_head: usize,
     tx_tail: usize,
 }
 
@@ -337,28 +334,56 @@ impl MacbDriver {
             control_registers,
             mac: [0x0C, 0xAD, 0x5D, 0x44, 0xF4, 0x6D],
 
-            rx_queues: [[RxDesc([0; 4]); QUEUE_LENGTH]; Self::MAX_CONTEXTS as usize],
-            tx_queue: [TxDesc([0; 4]); QUEUE_LENGTH],
+            rx_queue: [RxDesc([0; 4]); RX_QUEUE_LENGTH],
+            tx_queue: [TxDesc([0; 4]); TX_QUEUE_LENGTH],
 
+            rx_buffers: arr![RxBuf([0; 2048]); 16],
+
+            rx_head: 0,
             tx_tail: 0,
         }
     }
 
     pub fn initialize(&mut self) {
+        // let mac_lo = self.control_registers[GEM_SPADDR1LO];
+        // let mac_hi = self.control_registers[GEM_SPADDR1HI];
+
+        // self.mac[0] = mac_lo as u8;
+        // self.mac[1] = (mac_lo >> 8) as u8;
+        // self.mac[2] = (mac_lo >> 16) as u8;
+        // self.mac[3] = (mac_lo >> 24) as u8;
+        // self.mac[4] = mac_hi as u8;
+        // self.mac[5] = (mac_hi >> 8) as u8;
+
+        // for i in 0..6 {
+        //     println!("mac[{}] = {:x}", i, self.mac[i]);
+        // }
+
+        // self.control_registers[GEM_NWCFG] |= GEM_NWCFG_PROMISC;
+        // self.control_registers[GEM_SPADDR1LO] = mac_lo;
+        // self.control_registers[GEM_SPADDR1HI] = mac_hi;
+
         // Initialize queue state
-        for rx_queue in &mut self.rx_queues {
-            rx_queue[QUEUE_LENGTH - 1].0[1] |= DESC_0_RX_WRAP;
+        let rx_buffers_ptr = pmap::translate_host_address(self.rx_buffers[0].0.as_ptr() as u64).unwrap().pa;
+        for (i, rx) in self.rx_queue.iter_mut().enumerate() {
+            let addr = rx_buffers_ptr + 2048 * i as u64;
+            rx.0[0] = (addr & 0xffffffff) as u32;
+            rx.0[2] = (addr >> 32) as u32
         }
-        self.tx_queue[QUEUE_LENGTH - 1].0[0] |= DESC_1_TX_WRAP;
+        self.rx_queue[RX_QUEUE_LENGTH - 1].0[1] |= DESC_0_RX_WRAP;
+
+        self.tx_queue[TX_QUEUE_LENGTH - 1].0[0] |= DESC_1_TX_WRAP;
         for tx in self.tx_queue.iter_mut() {
             tx.0[1] = DESC_1_USED;
         }
 
         // Set control registers
         self.control_registers[GEM_DMACFG] = 0;
-        self.control_registers[GEM_DMACFG] |= GEM_DMACFG_ADDR_64B;
+        self.control_registers[GEM_DMACFG] |= GEM_DMACFG_ADDR_64B | ((2048 / GEM_DMACFG_RBUFSZ_MUL) << GEM_DMACFG_RBUFSZ_S);
 
-        let rx_ptr = pmap::translate_host_address(self.rx_queues[0].as_ptr() as u64).unwrap().pa;
+        self.control_registers[GEM_IER] = GEM_INT_RXCMPL;
+
+        let rx_ptr = pmap::translate_host_address(self.rx_queue.as_ptr() as u64).unwrap().pa;
         self.control_registers[GEM_RXQBASE] = rx_ptr as u32;
         self.control_registers[GEM_RBQPH] = (rx_ptr >> 32) as u32;
 
@@ -397,8 +422,32 @@ impl MacbDriver {
         }
 
         self.control_registers[GEM_NWCTRL] = GEM_NWCTRL_TXSTART | GEM_NWCTRL_RXENA | GEM_NWCTRL_TXENA;
+        self.control_registers[GEM_NWCTRL] = GEM_NWCTRL_RXENA | GEM_NWCTRL_TXENA;
 
         Some(buffers.iter().map(|b|b.len()).sum::<usize>() as u32)
+    }
+
+    pub fn receive(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion) {
+        local.with_ranges(guest_memory, VIRTIO_NET_RX_QUEUE, |guest_memory, ranges|{
+            if self.rx_queue[self.rx_head].0[1] & DESC_1_RX_SOF != 0 {
+                assert_eq!(ranges[0].end - ranges[0].start, 10);
+                assert_eq!(ranges.len(), 2);
+                assert!(self.rx_queue[self.rx_head].0[1] & DESC_1_RX_EOF != 0); // All packets must fit in one buffer
+
+                let len = (self.rx_queue[self.rx_head].0[1] & DESC_1_LENGTH) as u64;
+
+                guest_memory.slice_mut(ranges[1].start, ranges[1].end - ranges[1].start)
+                    .copy_from_slice(&self.rx_buffers[self.rx_head].0[..(len as usize)]);
+
+
+                self.rx_head = (self.rx_head + 1) % RX_QUEUE_LENGTH;
+                // TODO: Free descriptor
+
+                Some(len as u32)
+            } else {
+                None
+            }
+        });
     }
 }
 
@@ -412,8 +461,10 @@ impl Driver for MacbDriver {
         println!("MACB: Demux interrupt!");
         0
     }
-    fn interrupt(&mut self, _local: &mut LocalContext, _guest_memory: &mut MemoryRegion) {
+    fn interrupt(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion) -> bool {
         println!("MACB: Interrupt!");
+        self.receive(local, guest_memory);
+        true
     }
     fn doorbell(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion, queue: u32) {
         match queue {
