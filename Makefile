@@ -61,7 +61,7 @@ qemu-bbl: $(OUT)/rvirt.bin
 # Run rvirt inside QEMU but target the sifive_u machine type.
 qemu-sifive: $(OUT)/rvirt-bare-metal
 	~/git/qemu/build/riscv64-softmmu/qemu-system-riscv64 -machine sifive_u -nographic -m 2G \
-	    -append "nfsrootdebug ip=:10.0.2.4 root=/dev/nfs ipv6.disable=1" \
+	    -append "raid=noautodetect nfsrootdebug earlyprintk ip=::::riscv root=/dev/nfs rw nfsroot=/srv/nfs4/stage4,port=2049,vers=3 ipv6.disable=1" \
 	    -kernel $(OUT)/rvirt-bare-metal -nic user,id=net0 \
 	    -object filter-dump,id=net0,netdev=net0,file=dump.dat
 

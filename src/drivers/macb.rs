@@ -174,14 +174,14 @@ mod constants {
     pub const GEM_NWCTRL_RXENA: u32 = 0x00000004; /* Receive Enable */
     pub const GEM_NWCTRL_LOCALLOOP: u32 = 0x00000002; /* Local Loopback */
 
-    pub const GEM_NWCFG_STRIP_FCS: u64 = 0x00020000; /* Strip FCS field */
-    pub const GEM_NWCFG_LERR_DISC: u64 = 0x00010000; /* Discard RX frames with len err */
-    pub const GEM_NWCFG_BUFF_OFST_M: u64 = 0x0000C000; /* Receive buffer offset mask */
-    pub const GEM_NWCFG_BUFF_OFST_S: u64 = 14;         /* Receive buffer offset shift */
-    pub const GEM_NWCFG_UCAST_HASH: u64 = 0x00000080; /* accept unicast if hash match */
-    pub const GEM_NWCFG_MCAST_HASH: u64 = 0x00000040; /* accept multicast if hash match */
-    pub const GEM_NWCFG_BCAST_REJ: u64 = 0x00000020; /* Reject broadcast packets */
-    pub const GEM_NWCFG_PROMISC: u64 = 0x00000010; /* Accept all packets */
+    pub const GEM_NWCFG_STRIP_FCS: u32 = 0x00020000; /* Strip FCS field */
+    pub const GEM_NWCFG_LERR_DISC: u32 = 0x00010000; /* Discard RX frames with len err */
+    pub const GEM_NWCFG_BUFF_OFST_M: u32 = 0x0000C000; /* Receive buffer offset mask */
+    pub const GEM_NWCFG_BUFF_OFST_S: u32 = 14;         /* Receive buffer offset shift */
+    pub const GEM_NWCFG_UCAST_HASH: u32 = 0x00000080; /* accept unicast if hash match */
+    pub const GEM_NWCFG_MCAST_HASH: u32 = 0x00000040; /* accept multicast if hash match */
+    pub const GEM_NWCFG_BCAST_REJ: u32 = 0x00000020; /* Reject broadcast packets */
+    pub const GEM_NWCFG_PROMISC: u32 = 0x00000010; /* Accept all packets */
 
     pub const GEM_DMACFG_ADDR_64B: u32 = 1 << 30;
     pub const GEM_DMACFG_TX_BD_EXT: u32 = 1 << 29;
@@ -288,7 +288,7 @@ const GEM_DMACFG_ADDR_64B: u32 = 1 << 30;
 
 
 const TX_QUEUE_LENGTH: usize = 1024;
-const RX_QUEUE_LENGTH: usize = 16;
+const RX_QUEUE_LENGTH: usize = 128;
 
 const VIRTIO_MTU: u16 = 2048;
 
@@ -332,12 +332,12 @@ impl MacbDriver {
     pub const fn new(control_registers: MemoryRegion<u32>) -> Self {
         Self {
             control_registers,
-            mac: [0x0C, 0xAD, 0x5D, 0x44, 0xF4, 0x6D],
+            mac: [0x0E, 0xAD, 0x5D, 0x44, 0xF4, 0x6D],
 
             rx_queue: [RxDesc([0; 4]); RX_QUEUE_LENGTH],
             tx_queue: [TxDesc([0; 4]); TX_QUEUE_LENGTH],
 
-            rx_buffers: arr![RxBuf([0; 2048]); 16],
+            rx_buffers: arr![RxBuf([0; 2048]); 128],
 
             rx_head: 0,
             tx_tail: 0,
@@ -359,7 +359,7 @@ impl MacbDriver {
         //     println!("mac[{}] = {:x}", i, self.mac[i]);
         // }
 
-        // self.control_registers[GEM_NWCFG] |= GEM_NWCFG_PROMISC;
+        self.control_registers[GEM_NWCFG] |= GEM_NWCFG_PROMISC;
         // self.control_registers[GEM_SPADDR1LO] = mac_lo;
         // self.control_registers[GEM_SPADDR1HI] = mac_hi;
 
@@ -396,6 +396,7 @@ impl MacbDriver {
 
     // Transmit the contents of buffers then return the number of bytes transmitted.
     pub fn transmit(&mut self, buffers: &[&[u8]]) -> Option<u32> {
+        // println!("transmit");
         let mut header_bytes_left = 10u64;
         for i in 0..buffers.len() {
             if header_bytes_left >= buffers[i].len() as u64 {
@@ -428,33 +429,83 @@ impl MacbDriver {
     }
 
     pub fn receive(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion) {
-        local.with_ranges(guest_memory, VIRTIO_NET_RX_QUEUE, |guest_memory, ranges|{
-            if self.rx_queue[self.rx_head].0[1] & DESC_1_RX_SOF != 0 {
+        // println!("receive");
+
+        while self.rx_queue[self.rx_head].0[1] & DESC_1_RX_SOF != 0 {
+            assert!(self.rx_queue[self.rx_head].0[1] & DESC_1_RX_EOF != 0); // All packets must fit in one buffer
+
+            let len = (self.rx_queue[self.rx_head].0[1] & DESC_1_LENGTH) as u64;
+            let slice = &self.rx_buffers[self.rx_head].0[..(len as usize)];
+
+            let mut dropped = true;
+
+            local.with_ranges(guest_memory, VIRTIO_NET_RX_QUEUE, |guest_memory, ranges|{
+                if !dropped { return None; }
+                dropped = false;
+
+                assert!(ranges.len() >= 2);
                 assert_eq!(ranges[0].end - ranges[0].start, 10);
-                assert_eq!(ranges.len(), 2);
-                assert!(self.rx_queue[self.rx_head].0[1] & DESC_1_RX_EOF != 0); // All packets must fit in one buffer
+                assert!(ranges[1].end - ranges[1].start > len);
+                guest_memory.slice_mut(ranges[1].start, len).copy_from_slice(slice);
+                Some(len as u32 + 10)
+            });
 
-                let len = (self.rx_queue[self.rx_head].0[1] & DESC_1_LENGTH) as u64;
-
-                guest_memory.slice_mut(ranges[1].start, ranges[1].end - ranges[1].start)
-                    .copy_from_slice(&self.rx_buffers[self.rx_head].0[..(len as usize)]);
-
-
-                self.rx_head = (self.rx_head + 1) % RX_QUEUE_LENGTH;
-                // TODO: Free descriptor
-
-                Some(len as u32)
-            } else {
-                None
+            if dropped {
+                for (i, b) in slice.iter().enumerate() {
+                    if i != 0 && i % 16 == 0 {
+                        println!("");
+                    } else if i % 16 == 8 {
+                        print!("  ");
+                    }
+                    print!("{:02x} ", b);
+                }
+                println!("\n");
             }
-        });
+
+            self.rx_queue[self.rx_head].0[1] &= DESC_0_RX_WRAP;
+            self.rx_head = (self.rx_head + 1) % RX_QUEUE_LENGTH;
+            println!("rx_head = {}", self.rx_head);
+        }
+
+        // local.with_ranges(guest_memory, VIRTIO_NET_RX_QUEUE, |guest_memory, ranges|{
+        //     if self.rx_queue[self.rx_head].0[1] & DESC_1_RX_SOF != 0 {
+        //         assert_eq!(ranges[0].end - ranges[0].start, 10);
+        //         assert!(ranges.len() >= 2);
+        //         assert!(self.rx_queue[self.rx_head].0[1] & DESC_1_RX_EOF != 0); // All packets must fit in one buffer
+
+        //         let len = (self.rx_queue[self.rx_head].0[1] & DESC_1_LENGTH) as u64;
+        //         assert!(ranges[1].end - ranges[1].start > len);
+
+        //         guest_memory.slice_mut(ranges[1].start, len)
+        //             .copy_from_slice(&self.rx_buffers[self.rx_head].0[..(len as usize)]);
+
+
+        //         // for (i, b) in guest_memory.slice_mut(ranges[1].start, len-4).iter().enumerate() {
+        //         //     if i != 0 && i % 16 == 0 {
+        //         //         println!("");
+        //         //     } else if i % 16 == 8 {
+        //         //         print!("  ");
+        //         //     }
+        //         //     print!("{:02x} ", b);
+        //         // }
+        //         // println!("\n");
+
+        //         self.rx_queue[self.rx_head].0[1] = 0;
+        //         self.rx_head = (self.rx_head + 1) % RX_QUEUE_LENGTH;
+        //         // TODO: Free descriptor
+
+        //         Some(len as u32 + 10)
+        //     } else {
+        //         None
+        //     }
+        // });
     }
 }
 
 impl Driver for MacbDriver {
     const DEVICE_ID: u32 = 1;
     const FEATURES: u64 = VIRTIO_NET_F_MAC | VIRTIO_NET_F_MTU;
-    const QUEUE_NUM_MAX: u32 = 2;
+    const QUEUE_NUM_MAX: u32 = 32;
     const MAX_CONTEXTS: u64 = 1;
 
     fn demux_interrupt(&mut self) -> u64 {
@@ -462,17 +513,34 @@ impl Driver for MacbDriver {
         0
     }
     fn interrupt(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion) -> bool {
-        println!("MACB: Interrupt!");
+        if !local.driver_ok() {
+            println!("driver not ok");
+            return false;
+        }
+
         self.receive(local, guest_memory);
-        true
+        if local.interrupt_status == 0 {
+            println!("ignoring interrupt");
+        }
+        local.interrupt_status != 0
     }
     fn doorbell(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion, queue: u32) {
+        // println!("doorbell (queue = {}):\n---------------------", queue);
+        // // local.get_queue(guest_memory, 0);
+        // // local.get_queue(guest_memory, 1);
+        // for i in 0..1 {
+        //     println!("  queue[{}].pfn = {:x}", i, local.queue_pfn[i as usize]);
+        //     println!("  queue[{}].num = {:x}", i, local.queue_num[i as usize]);
+        //     println!("  queue[{}].align = {:x}", i, local.queue_align[i as usize]);
+        //     println!("  queue[{}].avail_idx = {}", i, local.get_queue(guest_memory, i).avail_idx());
+        //     println!("  queue[{}].used_idx = {}", i, local.get_queue(guest_memory, i).used_idx());
+        // }
         match queue {
-            VIRTIO_NET_RX_QUEUE => local.with_buffers(guest_memory, queue, |_buffer|{
-                // TODO
-                None
-            }),
             VIRTIO_NET_TX_QUEUE => local.with_buffers(guest_memory, queue, |b| self.transmit(b)),
+            VIRTIO_NET_RX_QUEUE => {
+                self.receive(local, guest_memory);
+                // local.get_queue(guest_memory, queue).set_used_flags(VIRTQ_USED_F_NO_NOTIFY)
+            }
             _ => {}
         }
     }

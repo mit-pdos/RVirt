@@ -45,6 +45,11 @@ mod constants {
     pub const VIRTIO_NET_RX_QUEUE: u32 = 0;
     pub const VIRTIO_NET_TX_QUEUE: u32 = 1;
 
+    pub const VIRTQ_AVAIL_F_NO_INTERRUPT: u16 = 1;
+    pub const VIRTQ_USED_F_NO_NOTIFY: u16 = 1;
+
+    pub const VIRTIO_INT_STATUS_USED_BUFFER: u32 = 0x1;
+
     pub const MAX_QUEUES: usize = 4;
 }
 pub use constants::*;
@@ -98,7 +103,6 @@ pub trait Driver: Sized {
     fn read_u8(&mut self, local: &mut LocalContext, _guest_memory: &mut MemoryRegion, offset: u64) -> u8 {
         if offset >= 0x100 {
             let value = self.read_config_u8(local, offset - 0x100);
-            println!("NET: lb {:#x} -> {:x}", offset, value);
             value
         } else {
             0
@@ -111,7 +115,6 @@ pub trait Driver: Sized {
         }
 
         if offset >= 0x100 {
-            println!("NET: lw {:#x}", offset);
             return self.read_config_u32(local, offset - 0x100);
         }
 
@@ -134,11 +137,10 @@ pub trait Driver: Sized {
             REG_QUEUE_PFN => local.queue_pfn[local.queue_sel as usize],
             REG_QUEUE_NOTIFY => 0,
             REG_INTERRUPT_STATUS => local.interrupt_status,
-            REG_INTERRUPT_ACK => local.interrupt_status = 0,
+            REG_INTERRUPT_ACK => 0,
             REG_STATUS => local.status,
             _ => 0,
         };
-        println!("NET: lw {:#x} -> {:x}", offset, value);
         value
     }
 
@@ -149,7 +151,6 @@ pub trait Driver: Sized {
     }
 
     fn write_u32(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion, offset: u64, value: u32) {
-        println!("NET: sw {:#x} <- {:x}", offset, value);
         if offset % 4 != 0 {
             return;
         }
@@ -240,6 +241,11 @@ impl LocalContext {
         self.queue_pfn = [0; MAX_QUEUES];
 
         self.interrupt_status = 0;
+        self.status = 0;
+    }
+
+    fn driver_ok(&self) -> bool {
+        self.status & STATUS_DRIVER_OK != 0
     }
 
     /// Repeatedly call f with the next buffer in the given queue until the queue is empty or the
@@ -248,14 +254,13 @@ impl LocalContext {
         F: FnMut(&[&[u8]]) -> Option<u32>
     {
         self.with_ranges(guest_memory, queue, |guest_memory, ranges| {
-            let mut buffers = ArrayVec::<[&[u8]; 16]>::new();
+            let mut buffers = ArrayVec::<[&[u8]; 64]>::new();
             for &Range { start, end } in ranges {
                 buffers.push(guest_memory.slice(start, end - start));
             }
             f(&*buffers)
         });
     }
-
 
     /// Repeatedly call f with the next buffer in the given queue until the queue is empty or the
     /// function returns None.
@@ -269,7 +274,7 @@ impl LocalContext {
                 return;
             }
 
-            let mut ranges = ArrayVec::<[Range<u64>; 16]>::new();
+            let mut ranges = ArrayVec::<[Range<u64>; 64]>::new();
 
             let idx = (dt.used_idx() as usize + 1) % dt.queue_size;
             let id = dt.avail_ring(idx) as usize;
@@ -287,9 +292,13 @@ impl LocalContext {
 
             if let Some(len) = f(guest_memory, &*ranges) {
                 let mut dt = self.get_queue(guest_memory, queue);
-                dt.set_used_ring_id(idx, id as u32);
                 dt.set_used_ring_len(idx, len);
+                dt.set_used_ring_id(idx, id as u32);
                 dt.set_used_idx(dt.used_idx().wrapping_add(1));
+
+                // if dt.avail_flags() & VIRTQ_AVAIL_F_NO_INTERRUPT == 0 {
+                    self.interrupt_status |= VIRTIO_INT_STATUS_USED_BUFFER;
+                // }
             } else {
                 return;
             }
@@ -307,12 +316,20 @@ impl LocalContext {
         let used_size = 6 + 8 * queue_size;
 
         let used_start = desc_size + avail_size;
-        let used_start = ((used_start - 1) & (align - 1)) + 1;
+        let used_start = ((used_start - 1) | (align - 1)) + 1;
 
         let slice = guest_memory.slice_mut(pfn as u64 * 4096, (used_start + used_size) as u64);
         let (desc, slice) = slice.split_at_mut(desc_size);
         let (avail, slice) = slice.split_at_mut(avail_size);
         let (_, used) = slice.split_at_mut(used_start - desc_size - avail_size);
+
+        // println!("queue = {}", queue);
+        // println!("  align = {}", align);
+        // println!("  queue_size = {}", queue_size);
+        // println!("  desc_size = {}", desc_size);
+        // println!("  avail_size = {}", avail_size);
+        // println!("  desc_size + avail_size - 1 = {}", desc_size + avail_size - 1);
+        // println!("  used_start = {}", used_start);
 
         DescriptorTable {
             desc,
