@@ -287,8 +287,8 @@ const GEM_DMACFG: u64 = 0x00000010;
 const GEM_DMACFG_ADDR_64B: u32 = 1 << 30;
 
 
-const TX_QUEUE_LENGTH: usize = 1024;
-const RX_QUEUE_LENGTH: usize = 128;
+const TX_QUEUE_LENGTH: usize = 256;
+const RX_QUEUE_LENGTH: usize = 16;
 
 const VIRTIO_MTU: u16 = 2048;
 
@@ -337,7 +337,7 @@ impl MacbDriver {
             rx_queue: [RxDesc([0; 4]); RX_QUEUE_LENGTH],
             tx_queue: [TxDesc([0; 4]); TX_QUEUE_LENGTH],
 
-            rx_buffers: arr![RxBuf([0; 2048]); 128],
+            rx_buffers: arr![RxBuf([0; 2048]); 16],
 
             rx_head: 0,
             tx_tail: 0,
@@ -359,7 +359,7 @@ impl MacbDriver {
         //     println!("mac[{}] = {:x}", i, self.mac[i]);
         // }
 
-        self.control_registers[GEM_NWCFG] |= GEM_NWCFG_PROMISC;
+        self.control_registers[GEM_NWCFG] |= GEM_NWCFG_PROMISC | GEM_NWCFG_STRIP_FCS;
         // self.control_registers[GEM_SPADDR1LO] = mac_lo;
         // self.control_registers[GEM_SPADDR1HI] = mac_hi;
 
@@ -367,14 +367,14 @@ impl MacbDriver {
         let rx_buffers_ptr = pmap::translate_host_address(self.rx_buffers[0].0.as_ptr() as u64).unwrap().pa;
         for (i, rx) in self.rx_queue.iter_mut().enumerate() {
             let addr = rx_buffers_ptr + 2048 * i as u64;
-            rx.0[0] = (addr & 0xffffffff) as u32;
+            rx.0[0] = (addr & 0xfffffffc) as u32;
             rx.0[2] = (addr >> 32) as u32
         }
-        self.rx_queue[RX_QUEUE_LENGTH - 1].0[1] |= DESC_0_RX_WRAP;
+        self.rx_queue[RX_QUEUE_LENGTH - 1].0[0] |= DESC_0_RX_WRAP;
 
-        self.tx_queue[TX_QUEUE_LENGTH - 1].0[0] |= DESC_1_TX_WRAP;
+        self.tx_queue[TX_QUEUE_LENGTH - 1].0[1] |= DESC_1_TX_WRAP;
         for tx in self.tx_queue.iter_mut() {
-            tx.0[1] = DESC_1_USED;
+            tx.0[1] |= DESC_1_USED;
         }
 
         // Set control registers
@@ -429,8 +429,6 @@ impl MacbDriver {
     }
 
     pub fn receive(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion) {
-        // println!("receive");
-
         while self.rx_queue[self.rx_head].0[1] & DESC_1_RX_SOF != 0 {
             assert!(self.rx_queue[self.rx_head].0[1] & DESC_1_RX_EOF != 0); // All packets must fit in one buffer
 
@@ -451,6 +449,7 @@ impl MacbDriver {
             });
 
             if dropped {
+                println!("RX queue is full. Dropping packet...");
                 for (i, b) in slice.iter().enumerate() {
                     if i != 0 && i % 16 == 0 {
                         println!("");
@@ -462,9 +461,9 @@ impl MacbDriver {
                 println!("\n");
             }
 
-            self.rx_queue[self.rx_head].0[1] &= DESC_0_RX_WRAP;
+            self.rx_queue[self.rx_head].0[1] = 0;
+            self.rx_queue[self.rx_head].0[0] &= !DESC_0_RX_OWNERSHIP;
             self.rx_head = (self.rx_head + 1) % RX_QUEUE_LENGTH;
-            println!("rx_head = {}", self.rx_head);
         }
 
         // local.with_ranges(guest_memory, VIRTIO_NET_RX_QUEUE, |guest_memory, ranges|{
@@ -505,7 +504,7 @@ impl MacbDriver {
 impl Driver for MacbDriver {
     const DEVICE_ID: u32 = 1;
     const FEATURES: u64 = VIRTIO_NET_F_MAC | VIRTIO_NET_F_MTU;
-    const QUEUE_NUM_MAX: u32 = 32;
+    const QUEUE_NUM_MAX: u32 = 1024;
     const MAX_CONTEXTS: u64 = 1;
 
     fn demux_interrupt(&mut self) -> u64 {
@@ -514,7 +513,6 @@ impl Driver for MacbDriver {
     }
     fn interrupt(&mut self, local: &mut LocalContext, guest_memory: &mut MemoryRegion) -> bool {
         if !local.driver_ok() {
-            println!("driver not ok");
             return false;
         }
 
@@ -538,8 +536,8 @@ impl Driver for MacbDriver {
         match queue {
             VIRTIO_NET_TX_QUEUE => local.with_buffers(guest_memory, queue, |b| self.transmit(b)),
             VIRTIO_NET_RX_QUEUE => {
-                self.receive(local, guest_memory);
-                // local.get_queue(guest_memory, queue).set_used_flags(VIRTQ_USED_F_NO_NOTIFY)
+                //self.receive(local, guest_memory);
+                local.get_queue(guest_memory, queue).set_used_flags(VIRTQ_USED_F_NO_NOTIFY)
             }
             _ => {}
         }
