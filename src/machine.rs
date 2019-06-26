@@ -67,13 +67,14 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mcounteren, 0xffffffff);
     csrw!(mscratch, M_MODE_STACK_BASE + M_MODE_STACK_STRIDE * hartid);
 
+    csrw!(satp, 0);
+
     pmp::install_pmp_allmem(7, pmp::READ | pmp::WRITE | pmp::EXEC);
 
     asm!("LOAD_ADDRESS t0, mtrap_entry
               csrw mtvec, t0"
          ::: "t0"  : "volatile");
 
-    print::early_guess_uart();
 
     // // Text segment
     // pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);

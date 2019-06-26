@@ -45,7 +45,7 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
     if !SHARED_STATICS.hart_lottery.swap(false,  Ordering::SeqCst) {
         csrw!(stvec, hart_entry as u64);
         csrw!(sscratch, hartid);
-        csrw!(sie, 0x222);
+        csrw!(sie, 0x002);
         csrsi!(sstatus, riscv::bits::STATUS_SIE);
         loop {
             riscv::wfi();
@@ -169,6 +169,7 @@ unsafe fn sstart2(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64
 unsafe fn hart_entry2(hartid: u64) {
     let reason = { SHARED_STATICS.ipi_reason_array.get_unchecked(hartid as usize).lock().take() };
     if let Some(IpiReason::TriggerHartEntry { a0, a1, a2, a3, a4, sp, satp }) = reason {
+        csrw!(sie, 0x222);
         csrw!(satp, satp);
         hart_entry3(a0, a1, a2, a3, a4, sp);
     } else {

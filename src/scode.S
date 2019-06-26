@@ -19,7 +19,7 @@ sstart:
 	// s4 = &boot_page_tables[hartid][0]
 	li s4, 0x80200000 // s4 = 0x80200000
 	add s4, s4, a2    //      + shared_segment_shift
-	slli t0, a0, 10
+	slli t0, a0, 13
 	add s4, s4, t0    //      + 1024 * hartid
 
 	// s5 = &boot_page_tables[hartid][511]

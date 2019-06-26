@@ -13,7 +13,7 @@ RISC-V is [classically virtualizable](https://en.wikipedia.org/wiki/Popek_and_Go
 
 ### Why Rust?
 
-Why not? Rust is a pleasant language to work with and can directly target bare metal systems. I was also exited by Rust's ability to guarantee memory safety for safe code, but I found the amount of unsafe code required for initialization and vm entry/exit partially negated this benefit.
+Why not? Rust is a pleasant language to work with and can directly target bare metal systems. I was also excited by Rust's ability to guarantee memory safety for safe code, but I found the amount of unsafe code required for initialization and vm entry/exit partially negated this benefit.
 
 ## Getting Started
 
