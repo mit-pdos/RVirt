@@ -29,7 +29,7 @@ bootwait=setenv _delay ${bootdelay}; echo ${_delay}; while test ${_delay} > 0; d
 autoload=true
 bootfile=hifiveu.fit
 
-serverip=192.168.1.1
-ipaddr=192.168.1.126
+serverip=10.0.2.2
+ipaddr=10.0.2.50
 netmask=255.255.255.0
 boot2=dhcp; bootm start ${fileaddr}; run setupfdt1; run setupvml; run setupird; run setupfdt2; bootm loados ${fileaddr}; echo "Booting kernel"; go 80000000
