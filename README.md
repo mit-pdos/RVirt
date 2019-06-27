@@ -7,9 +7,13 @@ RVirt is an S-mode trap-and-emulate hypervisor for RISC-V. It is currently targe
 
 ## FAQ
 
+### How is RVirt different from other hypervisors like [Firecracker](https://github.com/firecracker-microvm/firecracker), [Cloud Hypervisor](https://github.com/intel/cloud-hypervisor) or [xvisor](https://github.com/avpatel/xvisor-next)?
+
+All three of the other projects can only run on processors that have hardware virtualizations extensions like Intel VT-x or RISC-V's planned H-extension. Firecracker and Cloud additionally depend on KVM (and by extension the entire Linux kernel). By constrast, RVirt can run on basically any 64-bit RISC-V processor with a MMU and doesn't need KVM or Linux.
+
 ### Why RISC-V?
 
-RISC-V is [classically virtualizable](https://en.wikipedia.org/wiki/Popek_and_Goldberg_virtualization_requirements) which means that a hypervisor can rely on any privileged instruction triggering an illegal instruction fault when executed by the (unprivileged) guest OS. This is in constrast to other ISAs like x86 which have instructions that behave differently in user and kernel mode but never trap. Additionally, RISC-V has only 12 privileged control registers and only a handful of privileged instructions making the work to implement trap and emulate much more managable.
+RISC-V is [classically virtualizable](https://en.wikipedia.org/wiki/Popek_and_Goldberg_virtualization_requirements) which means that a hypervisor can rely on any privileged instruction triggering an illegal instruction fault when executed by the (unprivileged) guest OS. This is in constrast to other ISAs like x86 which have instructions that behave differently in user and kernel mode but never trap. Additionally, RISC-V has only 12 supervisor level control registers and only a handful of privileged instructions making the work to implement trap and emulate much more manageable.
 
 ### Why Rust?
 
@@ -68,11 +72,11 @@ Tier 2: Boots partially but lacks driver support for block/network device to com
 - [x] Address lingering bugs in boot process
 
 ### Functionality
-Additional features not needed for the correct virtualization of a single guest:
+In addition to being able to boot and run a single guest, RVirt also supports some features not needed for the correct virtualization of a single guest:
 
 - [x] multiple guests
 - [x] passthrough of virtio block and network devices
-- [ ] paravirtualized network devices backed by HiFive Unleashed's NIC
+- [ ] paravirtualized network devices backed by HiFive Unleashed's NIC *(in progress)*
 - [ ] multicore guests and inter-processor interrupts between them
 
 Other features not used by Linux / not supported by current platforms are unlikely to be implemented:
