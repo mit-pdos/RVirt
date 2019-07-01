@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/github/license/mit-pdos/rvirt.svg)
 ![Language](https://img.shields.io/github/languages/top/mit-pdos/rvirt.svg)
 
-RVirt is an S-mode trap-and-emulate hypervisor for RISC-V. It is currently targeted at QEMU's virt machine type, but partially supports the HiFive Unleashed as well. It can run either on either the [Berkley Boot Loader](https://github.com/riscv/riscv-pk) or with its own (considerably faster) M-mode stub. It is powerful enough to run multiple instances of Linux as guest operating systems.
+RVirt is an S-mode trap-and-emulate hypervisor for RISC-V. It is currently targeted at QEMU's virt machine type, but partially supports the HiFive Unleashed as well. It can run either on either the [Berkeley Boot Loader](https://github.com/riscv/riscv-pk) or with its own (considerably faster) M-mode stub. It is powerful enough to run multiple instances of Linux as guest operating systems.
 
 ## FAQ
 
