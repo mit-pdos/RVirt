@@ -5,6 +5,8 @@
 // https://github.com/torvalds/linux/blob/master/drivers/net/ethernet/cadence/macb_main.c
 // https://www.yumpu.com/en/document/view/31739994/gigabit-ethernet-mac-gem-technical-data-sheet-cadence-
 
+#![allow(unused)]
+
 use crate::memory_region::MemoryRegion;
 use super::*;
 

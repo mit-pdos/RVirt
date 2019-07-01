@@ -167,8 +167,8 @@ unsafe fn hart_entry2(hartid: u64) {
 #[naked]
 #[no_mangle]
 #[inline(never)]
-unsafe fn hart_entry3(hartid: u64, device_tree_blob: u64, shared_segments_shift: u64,
-                      hart_base_pa: u64, guestid: u64, stack_pointer: u64) {
+unsafe fn hart_entry3(_hartid: u64, _device_tree_blob: u64, _shared_segments_shift: u64,
+                      _hart_base_pa: u64, _guestid: u64, _stack_pointer: u64) {
     asm!("mv sp, a5
           j hart_entry4" :::: "volatile");
 }

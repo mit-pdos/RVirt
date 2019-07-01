@@ -2,7 +2,7 @@ use crate::fdt::MachineMeta;
 use crate::context::Context;
 use crate::constants::SYMBOL_PA2VA_OFFSET;
 use crate::memory_region::{MemoryRegion, PageTableRegion};
-use crate::{riscv, statics};
+use crate::riscv;
 use arr_macro::arr;
 use arrayvec::ArrayVec;
 use core::ptr;

@@ -8,8 +8,7 @@ sstart:
 
 	// sp = M_MODE_STACK_BASE + hartid * M_MODE_STACK_STRIDE
 	li sp, 0x80810000 // = M_MODE_STACK_BASE
-	li t0, 0x10000    // = M_MODE_STACK_STRIDE
-	mul t0, t0, a0
+	slli t0, a0, 16   // = a0 * M_MODE_STACK_STRIDE
     add sp, sp, t0
 
 	// sp = pa2va(sp)

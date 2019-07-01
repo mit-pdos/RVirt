@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use arrayvec::ArrayVec;
 use byteorder::{ByteOrder, LittleEndian};
 use crate::memory_region::MemoryRegion;
