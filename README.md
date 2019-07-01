@@ -9,15 +9,15 @@ RVirt is an S-mode trap-and-emulate hypervisor for RISC-V. It is currently targe
 
 ### How is RVirt different from other hypervisors like [Firecracker](https://github.com/firecracker-microvm/firecracker), [Cloud Hypervisor](https://github.com/intel/cloud-hypervisor) or [xvisor](https://github.com/avpatel/xvisor-next)?
 
-All three of the other projects can only run on processors that have hardware virtualizations extensions like Intel VT-x or RISC-V's planned H-extension. Firecracker and Cloud additionally depend on KVM (and by extension the entire Linux kernel). By constrast, RVirt can run on basically any 64-bit RISC-V processor with a MMU and doesn't need KVM or Linux.
+All three of the other projects can only run on processors that have hardware virtualization extensions like Intel VT-x or RISC-V's planned H-extension. Firecracker and Cloud additionally depend on KVM (and by extension the entire Linux kernel). By contrast, RVirt doesn't need KVM or Linux and can run on any sufficiently powerful 64-bit RISC-V processor with an MMU.
 
 ### Why RISC-V?
 
-RISC-V is [classically virtualizable](https://en.wikipedia.org/wiki/Popek_and_Goldberg_virtualization_requirements) which means that a hypervisor can rely on any privileged instruction triggering an illegal instruction fault when executed by the (unprivileged) guest OS. This is in constrast to other ISAs like x86 which have instructions that behave differently in user and kernel mode but never trap. Additionally, RISC-V has only 12 supervisor level control registers and only a handful of privileged instructions making the work to implement trap and emulate much more manageable.
+RISC-V is [classically virtualizable](https://en.wikipedia.org/wiki/Popek_and_Goldberg_virtualization_requirements) which means that a hypervisor can rely on any privileged instruction triggering an illegal instruction fault when executed by the (unprivileged) guest OS. This is in contrast to other ISAs like x86 which have instructions that behave differently in user and kernel mode but never trap. Additionally, RISC-V has only 12 supervisor level control registers and only a handful of privileged instructions making the work to implement trap and emulate much more manageable.
 
 ### Why Rust?
 
-Why not? Rust is a pleasant language to work with and can directly target bare metal systems. I was also excited by Rust's ability to guarantee memory safety for safe code, but I found the amount of unsafe code required for initialization and vm entry/exit partially negated this benefit.
+Why not? Rust is a pleasant language to work with and can directly target bare metal platforms. I was also excited by Rust's ability to guarantee memory safety for safe code, but I found the amount of unsafe code required for initialization and vm entry/exit partially negated this benefit.
 
 ## Getting Started
 
@@ -85,3 +85,5 @@ Other features not used by Linux / not supported by current platforms are unlike
 - [ ] Sv48 or Sv57 guest page tables (only Sv39 currently allowed)
 - [ ] SR-IOV PCIe devices
 - [ ] 32-bit guests
+
+
