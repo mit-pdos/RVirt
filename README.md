@@ -9,7 +9,7 @@ RVirt is an S-mode trap-and-emulate hypervisor for RISC-V. It is currently targe
 
 ### How is RVirt different from other hypervisors like [Firecracker](https://github.com/firecracker-microvm/firecracker), [Cloud Hypervisor](https://github.com/intel/cloud-hypervisor) or [xvisor](https://github.com/avpatel/xvisor-next)?
 
-All three of the other projects can only run on processors that have hardware virtualization extensions like Intel VT-x or RISC-V's planned H-extension. Firecracker and Cloud additionally depend on KVM (and by extension the entire Linux kernel). By contrast, RVirt doesn't need KVM or Linux and can run on any sufficiently powerful 64-bit RISC-V processor with an MMU.
+All three of the other projects can only run on processors that have hardware virtualization extensions like Intel VT-x or RISC-V's planned H-extension. Firecracker and Cloud Hypervisor additionally depend on KVM (and by extension the entire Linux kernel). By contrast, RVirt doesn't need KVM or Linux and can run on any sufficiently powerful 64-bit RISC-V processor with an MMU.
 
 ### Why RISC-V?
 
