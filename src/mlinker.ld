@@ -3,40 +3,20 @@ ENTRY( _start )
 
 SECTIONS
 {
-  . = 0x80000000;
-  .text.machine :
+  . = 0x80200000;
+  .payload :
   {
-    *(.text.entrypoint)
-    *(.text) *(.text.*)
-    *(.gnu.linkonce.t.*)
-  }
-
-  . = ALIGN(0x1000);
-  .rodata.machine :
-  {
-    *(.rdata) *(.rodata) *(.rodata.*)
-    *(.gnu.linkonce.r.*)
-    *(.srodata*)
-    *(.comment)
-  }
-
-  . = ALIGN(0x200000);
-  .payload : {
     *(.payload)
   }
 
-  /DISCARD/ :
+  /*
+     Seek backwards to the start of memory. Any additional sections will be
+     appended directly after this one, and an error will be generated if there
+     are any overlaps with the payload.
+  */
+  . = 0x80000000;
+  .text.entrypoint : AT(0x80000000)
   {
-    *(.shared.data)
-
-    *(.data)
-    *(.data.*)
-    *(.gnu.linkonce.d.*)
-
-	*(.bss)
-    *(.bss.*)
-    *(.sbss*)
-    *(.gnu.linkonce.b.*)
-    *(COMMON)
+    *(.text.entrypoint)
   }
 }

@@ -1,29 +1,18 @@
 #![no_std]
 #![feature(asm)]
 #![feature(const_slice_len)]
-#![feature(const_str_len)]
 #![feature(global_asm)]
 #![feature(lang_items)]
-#![feature(linkage)]
 #![feature(naked_functions)]
-#![feature(proc_macro_hygiene)]
-#![feature(ptr_offset_from)]
 #![feature(start)]
-#![feature(try_blocks)]
 
 use rvirt::*;
-
-pub mod pagedebug;
-pub mod pmp;
-pub mod pmptest;
 
 // mandatory rust environment setup
 #[lang = "eh_personality"] extern fn eh_personality() {}
 #[panic_handler] fn panic(info: &::core::panic::PanicInfo) -> ! { println!("{}", info); loop {}}
 #[start] fn start(_argc: isize, _argv: *const *const u8) -> isize {0}
 #[no_mangle] fn abort() -> ! { println!("Abort!"); loop {}}
-
-const TEST_PMP: bool = false;
 
 const M_MODE_STACK_BASE: u64 = 0x80810000;
 const M_MODE_STACK_STRIDE: u64 = 0x10000;
@@ -47,16 +36,11 @@ unsafe fn _start(hartid: u64, device_tree_blob: u64) {
     csrw!(mtvec, 0x80000000);
     csrw!(stvec, 0);
 
-    if TEST_PMP {
-        pmptest::pmptest_mstart(hartid, device_tree_blob);
-    } else {
-        mstart(hartid, device_tree_blob);
-    }
+    mstart(hartid, device_tree_blob);
 }
 
 #[inline(never)]
 unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
-    // Initialize some control registers
     csrs!(mideleg, 0x0222);
     csrs!(medeleg, 0xb1ff);
     csrw!(mie, 0x088);
@@ -65,21 +49,15 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mepc, PAYLOAD.as_ptr() as u64);
     csrw!(mcounteren, 0xffffffff);
     csrw!(mscratch, M_MODE_STACK_BASE + M_MODE_STACK_STRIDE * hartid);
+    csrw!(pmpaddr0, 0xffffffffffffffff);
+    csrw!(pmpcfg0, csrr!(pmpcfg0) | 0x1f);
     csrw!(satp, 0);
-
-    pmp::install_pmp_allmem(0, pmp::READ | pmp::WRITE | pmp::EXEC);
 
     asm!("lla t0, mtrap_entry
           csrw mtvec, t0"
          ::: "t0" : "volatile");
 
-    // // Text segment
-    // pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);
-    // // Shared data segment
-    // pmp::install_pmp_napot(1, pmp::LOCK | pmp::READ | pmp::WRITE, 0x80200000, 0x200000);
-
-    // pmp::debug_pmp();
-    // pagedebug::debug_paging();
+    riscv::sfence_vma();
 
     enter_supervisor(hartid, device_tree_blob);
 }
@@ -98,8 +76,6 @@ pub unsafe fn forward_exception() {
     csrw!(scause, csrr!(mcause));
     csrw!(stval, csrr!(mtval));
     csrw!(mepc, csrr!(stvec) & !0x3);
-
-    pagedebug::debug_paging();
 
     let status = csrr!(mstatus);
     if status & STATUS_SIE != 0 {
