@@ -1,6 +1,5 @@
 
 use rvirt::*;
-use crate::machdebug::*;
 use crate::pagedebug::PageWalkError::{ErrUnmapped};
 use crate::riscv::bits::STATUS_SUM;
 
@@ -117,12 +116,12 @@ unsafe fn walk_page_table<Data>(root: u64, cb: PageWalkerCallback<Data>, data: &
 fn flag(flags: u8, f: &str, flag: u8) {
     let mut spaces = 1;
     if (flags & flag) == flag {
-        machine_debug_puts(f);
+        print!("{}", f);
     } else {
         spaces += f.len();
     }
     for _ in 0..spaces {
-        machine_debug_puts(" ");
+        print!(" ");
     }
 }
 
@@ -141,21 +140,21 @@ struct CompressionWalker<'data, Data> {
 fn compression_walk<Data>(flags: u8, rsw: u8, va: u64, pa: u64, len: u64, err: PageWalkError, walker: &mut CompressionWalker<Data>) {
     if walker.haslast && (flags != walker.lastflags || rsw != walker.lastrsw || va != walker.endva || (pa != walker.endpa && err != ErrUnmapped) || err != walker.lasterr) {
         /*if flags != walker.lastflags {
-            machine_debug_puts("FLAGS\n");
+            print!("FLAGS\n");
         }
         if rsw != walker.lastrsw {
-            machine_debug_puts("RSW\n");
+            print!("RSW\n");
         }
         if va != walker.endva {
-            machine_debug_puts("VA\n");
+            print!("VA\n");
         }
         if pa != walker.endpa && err != ErrUnmapped {
-            machine_debug_puts("PA\n");
+            print!("PA\n");
         }
         if err != walker.lasterr {
-            machine_debug_puts("ERR\n");
+            print!("ERR\n");
         }
-        machine_debug_puts("RETIRED\n");*/
+        print!("RETIRED\n");*/
         // retire last entry
         (walker.cb)(walker.lastflags, walker.lastrsw, walker.endva - walker.totallen, walker.endpa - walker.totallen, walker.totallen, walker.lasterr, walker.data);
         walker.haslast = false;
@@ -207,63 +206,43 @@ fn debug_walk(flags: u8, rsw: u8, va: u64, pa: u64, len: u64, err: PageWalkError
     flag(flags, "GLOBAL", FLAG_GLOBAL);
     flag(flags, "ACC", FLAG_ACCESSED);
     flag(flags, "DIRTY", FLAG_DIRTY);
-    machine_debug_puts(" ");
-    machine_debug_putint(rsw as u64);
-    machine_debug_puts("  ");
-    machine_debug_puthex64(va);
-    machine_debug_puts("-");
-    machine_debug_puthex64(va + len - 1);
+    print!(" {} {:#018x}-{:#018x}", rsw, va, va + len - 1);
     if err != ErrUnmapped {
-        machine_debug_puts(" ");
-        machine_debug_puthex64(pa);
-        machine_debug_puts("-");
-        machine_debug_puthex64(pa + len - 1);
-        machine_debug_puts(" ");
+        print!(" {:#018x}-{:#018x} ", pa, pa + len - 1);
     } else {
-        machine_debug_puts("                                       ")
+        print!("                                       ")
     }
-    machine_debug_puts(pwe_to_str(err));
-    machine_debug_newline();
+    println!("{}", pwe_to_str(err));
 }
 
 #[inline(never)]
 pub fn debug_paging() {
     let hart = csrr!(mhartid);
-    machine_debug_puts("==================================================== PAGE TABLE STATE (hart ");
-    machine_debug_putint(hart);
-    machine_debug_puts(") ===================================================\n");
+    println!("==================================================== PAGE TABLE STATE (hart {}) ===================================================", hart);
     let (mode, asid, ppn) = parse_satp(csrr!(satp));
     let root = ppn << PAGE_BITS;
 
-    machine_debug_puts("Paging mode: ");
-    machine_debug_puts(mode_to_str(mode));
-    machine_debug_newline();
-
-    machine_debug_puts("ASID: ");
-    machine_debug_putint(asid as u64);
-    machine_debug_newline();
-
-    machine_debug_puts("Page table address: ");
-    machine_debug_puthex64(root);
-    machine_debug_newline();
+    println!("Paging mode: {}", mode_to_str(mode));
+    println!("ASID: {}", asid);
+    println!("Page table address: {:#x}", root);
 
     if (csrr!(sstatus) & STATUS_SUM) != 0 {
-        machine_debug_puts("Supervisor: can access user memory\n");
+        println!("Supervisor: can access user memory");
     } else {
-        machine_debug_puts("Supervisor: limited to supervisor memory\n");
+        println!("Supervisor: limited to supervisor memory");
     }
 
     if mode != MODE_SV39 {
-        machine_debug_puts("debugging not implemented for this paging mode.\n")
+        println!("debugging not implemented for this paging mode.")
     } else {
-        machine_debug_puts("VALID R W X USER GLOBAL ACC DIRTY RSW   VIRTUAL (low)      VIRTUAL (high)     PHYSICAL (low)     PHYSICAL (high)  TRAVERSAL-ERROR\n");
+        println!("VALID R W X USER GLOBAL ACC DIRTY RSW   VIRTUAL (low)      VIRTUAL (high)     PHYSICAL (low)     PHYSICAL (high)  TRAVERSAL-ERROR");
 
         unsafe {
             let debug_walk_ptr: u64;
-            asm!("LOAD_ADDRESS $0, debug_walk" : "=r"(debug_walk_ptr));
+            asm!("lla $0, debug_walk" : "=r"(debug_walk_ptr));
             walk_page_table_compressed(root, core::mem::transmute(debug_walk_ptr), &mut ());
         }
-        machine_debug_puts("VALID R W X USER GLOBAL ACC DIRTY RSW   VIRTUAL (low)      VIRTUAL (high)     PHYSICAL (low)     PHYSICAL (high)  TRAVERSAL-ERROR\n");
+        println!("VALID R W X USER GLOBAL ACC DIRTY RSW   VIRTUAL (low)      VIRTUAL (high)     PHYSICAL (low)     PHYSICAL (high)  TRAVERSAL-ERROR");
     }
-    machine_debug_puts("====================================================== END PAGE TABLE STATE ======================================================\n");
+    println!("====================================================== END PAGE TABLE STATE ======================================================");
 }

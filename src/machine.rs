@@ -13,7 +13,6 @@
 
 use rvirt::*;
 
-pub mod machdebug;
 pub mod pagedebug;
 pub mod pmp;
 pub mod pmptest;
@@ -99,6 +98,8 @@ pub unsafe fn forward_exception() {
     csrw!(scause, csrr!(mcause));
     csrw!(stval, csrr!(mtval));
     csrw!(mepc, csrr!(stvec) & !0x3);
+
+    pagedebug::debug_paging();
 
     let status = csrr!(mstatus);
     if status & STATUS_SIE != 0 {
