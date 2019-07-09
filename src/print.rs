@@ -125,7 +125,6 @@ impl fmt::Write for UartWriter {
 }
 unsafe impl Send for UartWriter {}
 
-#[cfg(not(feature = "physical_symbol_addresses"))]
 #[macro_use]
 pub mod macros {
     #[macro_export]
@@ -134,47 +133,24 @@ pub mod macros {
             use core::fmt::Write;
             use crate::SHARED_STATICS;
             let mut writer = SHARED_STATICS.uart_writer.lock();
-            writer.write_str("\u{1b}[33m").unwrap();
+            if cfg!(feature = "physical_symbol_addresses") {
+                writer.write_str("\u{1b}[31m").unwrap();
+            } else {
+                writer.write_str("\u{1b}[33m").unwrap();
+            }
             writer.write_fmt(format_args!($($arg)*)).unwrap();
             writer.write_str("\u{1b}[0m").unwrap();
         });
     }
     #[macro_export]
     macro_rules! println {
-        ($fmt:expr) => (print!(concat!($fmt, "\n")));
-        ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
-    }
-}
-
-#[cfg(feature = "physical_symbol_addresses")]
-#[macro_use]
-pub mod macros {
-    #[macro_export]
-    macro_rules! print {
-        ($s:expr) => ({
-            use crate::SHARED_STATICS;
-            let mut writer = SHARED_STATICS.uart_writer.lock();
-            for byte in concat!("\u{1b}[33m", $s,"\u{1b}[0m").bytes() {
-                writer.putchar(byte);
-            }
-        });
-        ($fmt:expr, $($arg:expr),*) => ({
-            $(
-                let _ = $arg;
-            )*
-            print!($fmt);
-        });
-    }
-    #[macro_export]
-    macro_rules! println {
-        ($s:expr) => (print!(concat!($s, "\n")));
-        ($fmt:expr, $($arg:expr),*) => (print!(concat!($fmt, "\n"), $($arg),*));
+        ($fmt:expr) => (crate::print!(concat!($fmt, "\n")));
+        ($fmt:expr, $($arg:tt)*) => (crate::print!(concat!($fmt, "\n"), $($arg)*));
     }
 }
 
 pub fn guest_println(guestid: u64, line: &[u8]) {
     use core::fmt::Write;
-    use crate::SHARED_STATICS;
     let mut writer = SHARED_STATICS.uart_writer.lock();
     match guestid {
         1 => writer.write_str("\u{1b}[32m").unwrap(),

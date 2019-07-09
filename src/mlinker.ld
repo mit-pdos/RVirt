@@ -12,9 +12,7 @@ SECTIONS
   }
 
   . = ALIGN(0x1000);
-  _rodata_pa = .;
-  . += 0xffffffff40000000;
-  .rodata.machine : AT(_rodata_pa)
+  .rodata.machine :
   {
     *(.rdata) *(.rodata) *(.rodata.*)
     *(.gnu.linkonce.r.*)

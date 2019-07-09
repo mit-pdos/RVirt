@@ -228,7 +228,6 @@ fn debug_walk(flags: u8, rsw: u8, va: u64, pa: u64, len: u64, err: PageWalkError
 
 #[inline(never)]
 pub fn debug_paging() {
-    machine_debug_mark_begin();
     let hart = csrr!(mhartid);
     machine_debug_puts("==================================================== PAGE TABLE STATE (hart ");
     machine_debug_putint(hart);
@@ -267,5 +266,4 @@ pub fn debug_paging() {
         machine_debug_puts("VALID R W X USER GLOBAL ACC DIRTY RSW   VIRTUAL (low)      VIRTUAL (high)     PHYSICAL (low)     PHYSICAL (high)  TRAVERSAL-ERROR\n");
     }
     machine_debug_puts("====================================================== END PAGE TABLE STATE ======================================================\n");
-    machine_debug_mark_end();
 }

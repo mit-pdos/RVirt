@@ -20,9 +20,9 @@ pub mod pmptest;
 
 // mandatory rust environment setup
 #[lang = "eh_personality"] extern fn eh_personality() {}
-#[panic_handler] fn panic(_info: &::core::panic::PanicInfo) -> ! { machdebug::machine_debug_abort("panic()!"); loop{} }
+#[panic_handler] fn panic(info: &::core::panic::PanicInfo) -> ! { println!("{}", info); loop {}}
 #[start] fn start(_argc: isize, _argv: *const *const u8) -> isize {0}
-#[no_mangle] fn abort() -> ! { machdebug::machine_debug_abort("abort()!"); loop {} }
+#[no_mangle] fn abort() -> ! { println!("Abort!"); loop {}}
 
 const TEST_PMP: bool = false;
 
@@ -63,18 +63,16 @@ unsafe fn mstart(hartid: u64, device_tree_blob: u64) {
     csrw!(mie, 0x088);
     csrc!(mstatus, STATUS_MPP_M);
     csrs!(mstatus, STATUS_MPP_S);
-    csrw!(mepc, PAYLOAD.as_ptr() as u64 - SYMBOL_PA2VA_OFFSET);
+    csrw!(mepc, PAYLOAD.as_ptr() as u64);
     csrw!(mcounteren, 0xffffffff);
     csrw!(mscratch, M_MODE_STACK_BASE + M_MODE_STACK_STRIDE * hartid);
-
     csrw!(satp, 0);
 
-    pmp::install_pmp_allmem(7, pmp::READ | pmp::WRITE | pmp::EXEC);
+    pmp::install_pmp_allmem(0, pmp::READ | pmp::WRITE | pmp::EXEC);
 
-    asm!("LOAD_ADDRESS t0, mtrap_entry
-              csrw mtvec, t0"
-         ::: "t0"  : "volatile");
-
+    asm!("lla t0, mtrap_entry
+          csrw mtvec, t0"
+         ::: "t0" : "volatile");
 
     // // Text segment
     // pmp::install_pmp_napot(0, pmp::LOCK | pmp::READ | pmp::EXEC, 0x80000000, 0x200000);

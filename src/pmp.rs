@@ -45,7 +45,7 @@ pub fn read_pmp_address(entry: u8) -> u64 {
         13 => csrr!(pmpaddr13),
         14 => csrr!(pmpaddr14),
         15 => csrr!(pmpaddr15),
-        _ => { machine_debug_abort("entry out of range"); 0 }
+        _ => machine_debug_abort("entry out of range"),
     }
 }
 
@@ -160,7 +160,6 @@ pub const LOCK: u8 = 0x80;
 
 /** prints out as much information on the PMP state as possible in M-mode */
 pub fn debug_pmp() {
-    machine_debug_mark_begin();
     let hart = csrr!(mhartid);
     machine_debug_puts("============================== PMP CONFIGURATION STATE (hart ");
     machine_debug_putint(hart);
@@ -226,5 +225,4 @@ pub fn debug_pmp() {
         lastaddress = address;
     }
     machine_debug_puts("================================== END CONFIGURATION STATE ==================================\n");
-    machine_debug_mark_end();
 }
