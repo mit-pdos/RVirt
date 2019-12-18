@@ -1,6 +1,5 @@
 #![no_std]
 #![feature(asm)]
-#![feature(const_slice_len)]
 #![feature(global_asm)]
 #![feature(lang_items)]
 #![feature(naked_functions)]
